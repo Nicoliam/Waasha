@@ -15,6 +15,10 @@ export const routes: Routes = [
     path: 'marketplace/provider/:providerId/service/:serviceId',
     loadComponent: () => import('./features/provider/service-detail.component').then((m) => m.ServiceDetailComponent),
   },
+  {
+    path: 'marketplace/provider/:providerId/service/:serviceId/book',
+    loadComponent: () => import('./features/booking/booking.component').then((m) => m.BookingComponent),
+  },
   // Legacy alias preserved for Phase 1 deep links
   {
     path: 'providers/:id',

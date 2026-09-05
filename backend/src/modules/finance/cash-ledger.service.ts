@@ -1,6 +1,7 @@
 import { prisma } from '../../config/prisma';
 import { getCommissionRateForProvider } from './commission.service';
 import { getCashCapForProvider } from './cash-caps.service';
+import { DEFAULT_TIMEZONE } from '../../utils/timezone';
 
 export class CashCapExceededError extends Error {
   status = 422;
@@ -207,7 +208,7 @@ export async function createCashBooking(input: {
           serviceLocationType: 'PROVIDER',
           scheduledStart: new Date(),
           scheduledEnd: new Date(Date.now() + 60 * 60 * 1000),
-          timezone: 'Africa/Johannesburg',
+          timezone: DEFAULT_TIMEZONE,
           // Financial ledger (ACCRUAL) is separate from service COMPLETED lifecycle.
           // Booking stays PENDING until actual service is performed; paymentStatus PAID records cash collection.
           status: 'PENDING',

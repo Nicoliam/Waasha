@@ -1,6 +1,6 @@
 import { Component, OnInit, inject } from '@angular/core';
 import { CommonModule } from '@angular/common';
-import { ActivatedRoute, RouterLink } from '@angular/router';
+import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { MarketplaceService } from '../../core/services/marketplace.service';
 import { ServiceDto, ProviderProfileDto } from '../../core/models/discovery-radius.model';
 
@@ -135,6 +135,7 @@ import { ServiceDto, ProviderProfileDto } from '../../core/models/discovery-radi
 export class ServiceDetailComponent implements OnInit {
   private readonly marketplace = inject(MarketplaceService);
   private readonly route = inject(ActivatedRoute);
+  private readonly router = inject(Router);
 
   providerId = '';
   serviceId = '';
@@ -172,7 +173,8 @@ export class ServiceDetailComponent implements OnInit {
   retry(): void { this.load(); }
 
   onChooseDateTime(): void {
-    // Intentionally no booking yet — placeholder for next slice (availability)
+    if (!this.providerId || !this.serviceId) return;
+    this.router.navigate(['/marketplace/provider', this.providerId, 'service', this.serviceId, 'book']);
   }
 
   trackImg(_: number, img: { id: string }): string { return img.id; }

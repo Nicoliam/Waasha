@@ -127,6 +127,7 @@ model ProviderProfile {
   acceptCash             Boolean            @default(true) @map("accept_cash")
   isStudent              Boolean            @default(false) @map("is_student")
   studentVerificationStatus VerificationStatus @default(UNVERIFIED) @map("student_verification_status")
+  timezone               String             @default("Africa/Johannesburg") @map("timezone")
   status                 ProviderStatus     @default(ACTIVE)
   createdAt              DateTime           @default(now()) @map("created_at")
   updatedAt              DateTime           @updatedAt @map("updated_at")

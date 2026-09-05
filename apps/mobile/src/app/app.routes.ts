@@ -13,6 +13,10 @@ export const routes: Routes = [
     path: 'marketplace/provider/:providerId/service/:serviceId',
     loadComponent: () => import('./features/provider/service-detail.page').then((m) => m.MobileServiceDetailPage),
   },
+  {
+    path: 'marketplace/provider/:providerId/service/:serviceId/book',
+    loadComponent: () => import('./features/booking/booking.page').then((m) => m.MobileBookingPage),
+  },
   { path: 'providers/:id', loadComponent: () => import('./features/provider/provider-profile.page').then((m) => m.ProviderProfilePage) },
   { path: 'auth/login', loadComponent: () => import('./features/auth/login.component').then((m) => m.LoginComponent) },
   { path: 'auth/register', loadComponent: () => import('./features/auth/register.component').then((m) => m.RegisterComponent) },

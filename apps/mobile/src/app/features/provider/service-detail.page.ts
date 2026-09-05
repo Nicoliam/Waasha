@@ -1,6 +1,6 @@
 import { Component, OnInit, inject } from '@angular/core';
 import { CommonModule } from '@angular/common';
-import { ActivatedRoute, RouterLink } from '@angular/router';
+import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { MarketplaceService } from '../../core/services/marketplace.service';
 import { ServiceDto } from '../../core/services/marketplace.service';
 
@@ -101,6 +101,7 @@ import { ServiceDto } from '../../core/services/marketplace.service';
 export class MobileServiceDetailPage implements OnInit {
   private readonly marketplace = inject(MarketplaceService);
   private readonly route = inject(ActivatedRoute);
+  private readonly router = inject(Router);
 
   providerId = '';
   serviceId = '';
@@ -131,7 +132,10 @@ export class MobileServiceDetailPage implements OnInit {
   }
 
   retry(): void { this.load(); }
-  onChooseDateTime(): void {}
+  onChooseDateTime(): void {
+    if (!this.providerId || !this.serviceId) return;
+    this.router.navigate(['/marketplace/provider', this.providerId, 'service', this.serviceId, 'book']);
+  }
 
   private load(): void {
     if (!this.providerId || !this.serviceId) {
