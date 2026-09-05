@@ -1,11 +1,12 @@
 import { Component, Input } from '@angular/core';
 import { CommonModule } from '@angular/common';
+import { RouterLink } from '@angular/router';
 import { ServiceDto } from '../../../core/models/discovery-radius.model';
 
 @Component({
   selector: 'waasha-service-card',
   standalone: true,
-  imports: [CommonModule],
+  imports: [CommonModule, RouterLink],
   template: `
     <article class="wa-service-card" [attr.aria-label]="service.name">
       <div class="wa-service-card__header">
@@ -53,15 +54,24 @@ import { ServiceDto } from '../../../core/models/discovery-radius.model';
         <span aria-hidden="true">🖼️</span> No image — polished fallback
       </div>
 
+      <a
+        *ngIf="providerId && service.status === 'ACTIVE'"
+        class="wa-btn wa-btn-primary wa-btn--navy wa-service-cta wa-service-cta--link"
+        [routerLink]="['/marketplace/provider', providerId, 'service', service.id]"
+        [attr.aria-label]="'View service ' + service.name + ' details'"
+      >
+        Choose Date & Time
+      </a>
       <button
+        *ngIf="!providerId || service.status !== 'ACTIVE'"
         type="button"
         class="wa-btn wa-btn-primary wa-btn--navy wa-service-cta"
         [disabled]="service.status !== 'ACTIVE'"
         [attr.aria-label]="'Select service ' + service.name"
       >
-        {{ service.status === 'ACTIVE' ? 'Select service — Secure Checkout' : 'Unavailable' }}
+        {{ service.status === 'ACTIVE' ? 'Choose Date & Time' : 'Unavailable' }}
       </button>
-      <p class="wa-service-note">Phase 2 attaches booking flow without redesign.</p>
+      <p class="wa-service-note">Availability selection lands in the next slice.</p>
     </article>
   `,
   styles: [`
@@ -81,13 +91,15 @@ import { ServiceDto } from '../../../core/models/discovery-radius.model';
     .wa-service-img { aspect-ratio: 1; border-radius: 12px; overflow: hidden; background: var(--waasha-bg); border: 1px solid var(--waasha-border); }
     .wa-service-img__el { width: 100%; height: 100%; object-fit: cover; }
     .wa-service-card__fallback { display: grid; place-items: center; height: 88px; border-radius: 12px; background: var(--waasha-bg); border: 1px dashed var(--waasha-border); color: var(--waasha-muted); font-size: 12px; }
-    .wa-service-cta { width: 100%; border-radius: 12px; padding: 11px 14px; }
-    .wa-btn--navy { background: var(--waasha-navy); }
+    .wa-service-cta { width: 100%; border-radius: 12px; padding: 11px 14px; text-decoration: none; display: inline-flex; align-items: center; justify-content: center; font-weight: 700; font-size: 13px; }
+    .wa-service-cta--link { cursor: pointer; }
+    .wa-btn--navy { background: var(--waasha-navy); color: white; border: 1px solid var(--waasha-navy); }
     .wa-service-note { margin: 0; font-size: 11px; color: var(--waasha-muted); text-align: center; }
   `]
 })
 export class ServiceCardComponent {
   @Input({ required: true }) service!: ServiceDto;
+  @Input() providerId?: string | null = null;
 
   get serviceModeLabel(): string {
     if (this.service.serviceMode === 'PROVIDER_LOCATION') return 'At provider';

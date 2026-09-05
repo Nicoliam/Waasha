@@ -65,4 +65,24 @@ export class MarketplaceService {
     }
     return this.http.get<ProviderProfileApiResponse>(`/api/v1/marketplace/providers/${encodeURIComponent(providerId)}`, { params });
   }
+
+  fetchProviderServices(
+    providerId: string,
+    opts?: { categoryId?: string; page?: number; perPage?: number },
+  ): Observable<{ success: boolean; data: ServiceDto[]; meta: { page: number; perPage: number; total: number } }> {
+    let params = new HttpParams();
+    if (opts?.categoryId) params = params.set('categoryId', opts.categoryId);
+    if (opts?.page) params = params.set('page', String(opts.page));
+    if (opts?.perPage) params = params.set('perPage', String(opts.perPage));
+    return this.http.get<{ success: boolean; data: ServiceDto[]; meta: { page: number; perPage: number; total: number } }>(
+      `/api/v1/marketplace/providers/${encodeURIComponent(providerId)}/services`,
+      { params },
+    );
+  }
+
+  fetchServiceDetail(providerId: string, serviceId: string): Observable<{ success: boolean; data: ServiceDto }> {
+    return this.http.get<{ success: boolean; data: ServiceDto }>(
+      `/api/v1/marketplace/providers/${encodeURIComponent(providerId)}/services/${encodeURIComponent(serviceId)}`,
+    );
+  }
 }

@@ -46,8 +46,8 @@ import { EnrichedProviderCardDto } from '../../../core/models/discovery-radius.m
       </div>
 
       <div class="wa-actions">
-        <a class="wa-btn wa-btn-ghost" [routerLink]="['/providers', provider.id]" [queryParams]="customerLoc ? { lat: customerLoc.latitude, lng: customerLoc.longitude } : {}">Profile</a>
-        <a class="wa-btn wa-btn-primary" [routerLink]="['/providers', provider.id]" [queryParams]="customerLoc ? { lat: customerLoc.latitude, lng: customerLoc.longitude } : {}">Book Service</a>
+        <a class="wa-btn wa-btn-ghost" [routerLink]="['/marketplace/provider', provider.id]" [queryParams]="customerLoc ? { lat: customerLoc.latitude, lng: customerLoc.longitude } : {}">Profile</a>
+        <a class="wa-btn wa-btn-primary" [routerLink]="['/marketplace/provider', provider.id]" [queryParams]="customerLoc ? { lat: customerLoc.latitude, lng: customerLoc.longitude } : {}">Book Service</a>
       </div>
     </article>
   `,

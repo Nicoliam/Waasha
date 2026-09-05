@@ -234,6 +234,154 @@ router.get('/providers', async (req: Request, res: Response) => {
   });
 });
 
+// ── Public services read — Phase 2 Slice 1 ─────────────────────────
+// GET /api/v1/marketplace/providers/:providerId/services — public, ACTIVE only, max 3 images
+router.get('/providers/:providerId/services', async (req: Request, res: Response) => {
+  const rawId = req.params.providerId as string;
+  if (!rawId || typeof rawId !== 'string' || rawId.trim().length === 0) {
+    return res.status(422).json({ success: false, error: { code: 'VALIDATION_ERROR', message: 'providerId is required' } });
+  }
+  const querySchema = z.object({
+    categoryId: z.string().optional(),
+    page: z.coerce.number().int().min(1).default(1),
+    perPage: z.coerce.number().int().min(1).max(50).default(20),
+  });
+  const parsed = querySchema.safeParse(req.query as any);
+  if (!parsed.success) {
+    return res.status(422).json({ success: false, error: { code: 'VALIDATION_ERROR', message: 'Invalid query', details: parsed.error.flatten() } });
+  }
+  const { categoryId, page, perPage } = parsed.data;
+
+  let resolvedCategoryId: string | null = null;
+  if (categoryId) {
+    const byId = await prisma.serviceCategory.findUnique({ where: { id: categoryId } }).catch(() => null);
+    if (byId) resolvedCategoryId = byId.id;
+    else {
+      const byCode = await prisma.serviceCategory.findUnique({ where: { code: categoryId } }).catch(() => null);
+      if (!byCode) return res.status(422).json({ success: false, error: { code: 'INVALID_CATEGORY', message: 'Invalid categoryId' } });
+      resolvedCategoryId = byCode.id;
+    }
+  }
+
+  try {
+    const provider = await prisma.providerProfile.findUnique({ where: { id: rawId }, select: { id: true, status: true, userId: true } });
+    if (!provider || provider.status !== 'ACTIVE') {
+      return res.status(404).json({ success: false, error: { code: 'PROVIDER_NOT_FOUND', message: 'Provider not found' } });
+    }
+
+    // Collect owned businessUnitIds for T3 (provider owns businesses). Non-T3 yields empty.
+    let ownedUnitIds: string[] = [];
+    try {
+      const businesses = await (prisma as any).business?.findMany?.({ where: { ownerProviderId: provider.userId }, select: { id: true } }) ?? [];
+      if (Array.isArray(businesses) && businesses.length > 0) {
+        const units = await (prisma as any).businessUnit?.findMany?.({ where: { businessId: { in: businesses.map((b: any) => b.id) } }, select: { id: true } }) ?? [];
+        ownedUnitIds = (units as any[]).map((u) => u.id);
+      }
+    } catch {
+      ownedUnitIds = [];
+    }
+
+    const baseWhere: any = { status: 'ACTIVE' as const, ...(resolvedCategoryId ? { serviceCategoryId: resolvedCategoryId } : {}) };
+    const ownerWhere: any =
+      ownedUnitIds.length > 0
+        ? { OR: [{ providerId: provider.id }, { businessUnitId: { in: ownedUnitIds } }] }
+        : { providerId: provider.id };
+
+    const where = { ...baseWhere, ...ownerWhere };
+
+    const total = await prisma.service.count({ where } as any);
+    const services = await prisma.service.findMany({
+      where: where as any,
+      include: {
+        category: { select: { id: true, code: true, name: true } },
+        images: { orderBy: { sortOrder: 'asc' }, take: 3 },
+      },
+      orderBy: { createdAt: 'desc' },
+      skip: (page - 1) * perPage,
+      take: perPage,
+    });
+
+    return res.json({
+      success: true,
+      data: services.map((s: any) => ({
+        id: s.id,
+        uuid: s.uuid,
+        name: s.name,
+        description: s.description,
+        price: Number(s.price),
+        currency: s.currency,
+        durationMinutes: s.durationMinutes,
+        serviceMode: s.serviceMode,
+        status: s.status,
+        category: s.category,
+        images: (s.images ?? []).slice(0, 3).map((img: any) => ({ id: img.id, imageUrl: img.imageUrl, sortOrder: img.sortOrder })),
+      })),
+      meta: { page, perPage, total },
+    });
+  } catch (e) {
+    return res.status(500).json({ success: false, error: { code: 'INTERNAL_ERROR', message: 'Failed to load services' } });
+  }
+});
+
+// GET /api/v1/marketplace/providers/:providerId/services/:serviceId — public service detail (ACTIVE only)
+router.get('/providers/:providerId/services/:serviceId', async (req: Request, res: Response) => {
+  const { providerId, serviceId } = req.params as { providerId: string; serviceId: string };
+  if (!providerId || !serviceId) {
+    return res.status(422).json({ success: false, error: { code: 'VALIDATION_ERROR', message: 'providerId and serviceId required' } });
+  }
+  try {
+    const provider = await prisma.providerProfile.findUnique({ where: { id: providerId }, select: { id: true, status: true, userId: true } });
+    if (!provider || provider.status !== 'ACTIVE') {
+      return res.status(404).json({ success: false, error: { code: 'PROVIDER_NOT_FOUND', message: 'Provider not found' } });
+    }
+    let ownedUnitIds: string[] = [];
+    try {
+      const businesses = await (prisma as any).business?.findMany?.({ where: { ownerProviderId: provider.userId }, select: { id: true } }) ?? [];
+      if (Array.isArray(businesses) && businesses.length > 0) {
+        const units = await (prisma as any).businessUnit?.findMany?.({ where: { businessId: { in: businesses.map((b: any) => b.id) } }, select: { id: true } }) ?? [];
+        ownedUnitIds = (units as any[]).map((u) => u.id);
+      }
+    } catch {
+      ownedUnitIds = [];
+    }
+
+    const service = await prisma.service.findUnique({
+      where: { id: serviceId },
+      include: {
+        category: { select: { id: true, code: true, name: true } },
+        images: { orderBy: { sortOrder: 'asc' }, take: 3 },
+      },
+    } as any);
+    if (!service || (service as any).status !== 'ACTIVE') {
+      return res.status(404).json({ success: false, error: { code: 'SERVICE_NOT_FOUND', message: 'Service not found' } });
+    }
+    const belongs =
+      (service as any).providerId === provider.id ||
+      (ownedUnitIds.length > 0 && ownedUnitIds.includes((service as any).businessUnitId));
+    if (!belongs) {
+      return res.status(404).json({ success: false, error: { code: 'SERVICE_NOT_FOUND', message: 'Service not found for provider' } });
+    }
+    return res.json({
+      success: true,
+      data: {
+        id: (service as any).id,
+        uuid: (service as any).uuid,
+        name: (service as any).name,
+        description: (service as any).description,
+        price: Number((service as any).price),
+        currency: (service as any).currency,
+        durationMinutes: (service as any).durationMinutes,
+        serviceMode: (service as any).serviceMode,
+        status: (service as any).status,
+        category: (service as any).category,
+        images: ((service as any).images ?? []).slice(0, 3).map((img: any) => ({ id: img.id, imageUrl: img.imageUrl, sortOrder: img.sortOrder })),
+      },
+    });
+  } catch {
+    return res.status(500).json({ success: false, error: { code: 'INTERNAL_ERROR', message: 'Failed to load service' } });
+  }
+});
+
 // GET /api/v1/marketplace/providers/:providerId — public provider profile + services
 // Must be after /providers list; Express matches exact before param, but keep param last
 router.get('/providers/:providerId', async (req: Request, res: Response) => {
@@ -262,9 +410,8 @@ router.get('/providers/:providerId', async (req: Request, res: Response) => {
     if (!provider) {
       return res.status(404).json({ success: false, error: { code: 'PROVIDER_NOT_FOUND', message: 'Provider not found' } });
     }
-    if (provider.status !== 'ACTIVE') {
-      // Still expose but flag; discovery filters already limit to ACTIVE, profile 404 if not active to avoid leaking paused providers
-      // For now allow but don't expose precise location if not active
+     if (provider.status !== 'ACTIVE') {
+      return res.status(404).json({ success: false, error: { code: 'PROVIDER_NOT_FOUND', message: 'Provider not found' } });
     }
 
     const primaryLoc = await prisma.providerLocation.findFirst({

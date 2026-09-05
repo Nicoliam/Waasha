@@ -1,5 +1,6 @@
 import { Component, OnInit, inject } from '@angular/core';
 import { CommonModule } from '@angular/common';
+import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, Router } from '@angular/router';
 import { CategoryFilterComponent } from '../../shared/components/discovery/category-filter.component';
 import { ProviderCardComponent } from '../../shared/components/discovery/provider-card.component';
@@ -12,7 +13,7 @@ import { CustomerDiscoveryRadiusKm, ServiceCategory, ProviderCardDto } from '../
 @Component({
   selector: 'waasha-discovery',
   standalone: true,
-  imports: [CommonModule, CategoryFilterComponent, ProviderCardComponent, RadiusExpansionComponent],
+  imports: [CommonModule, FormsModule, CategoryFilterComponent, ProviderCardComponent, RadiusExpansionComponent],
   template: `
     <div class="wa-discovery">
       <!-- Header / branding + location context -->
@@ -40,6 +41,17 @@ import { CustomerDiscoveryRadiusKm, ServiceCategory, ProviderCardDto } from '../
               <button type="button" class="wa-link" (click)="useMyLocation()" [disabled]="locating">
                 {{ locating ? 'Locating…' : 'Use my location' }}
               </button>
+            </div>
+            <div class="wa-context-manual" role="group" aria-label="Manual location">
+              <label class="wa-manual-label" for="wa-lat">Manual location</label>
+              <div class="wa-manual-row">
+                <input id="wa-lat" type="number" step="0.0001" class="wa-manual-input" [(ngModel)]="manualLat" placeholder="Latitude" aria-label="Latitude" />
+                <input id="wa-lng" type="number" step="0.0001" class="wa-manual-input" [(ngModel)]="manualLng" placeholder="Longitude" aria-label="Longitude" />
+                <button type="button" class="wa-btn wa-btn-primary wa-btn--sm wa-btn--navy" (click)="applyManualLocation()" aria-label="Apply manual location">Apply</button>
+              </div>
+              <p class="wa-manual-note">Confirm location — discovery uses your selected point. No precise address exposed.</p>
+              <p *ngIf="manualError" class="wa-manual-error" role="alert">{{ manualError }}</p>
+              <p *ngIf="manualSuccess" class="wa-manual-success" role="status">{{ manualSuccess }}</p>
             </div>
             <div class="wa-context-radius">
               <span class="wa-context-radius-label">Discovery radius</span>
@@ -150,6 +162,14 @@ import { CustomerDiscoveryRadiusKm, ServiceCategory, ProviderCardDto } from '../
     .wa-radius-pill { padding: 6px 14px; border-radius: 999px; border: 1px solid var(--waasha-border); background: white; font-size: 12px; font-weight: 700; color: var(--waasha-muted); cursor: pointer; }
     .wa-radius-pill.active { background: var(--waasha-navy); color: white; border-color: var(--waasha-navy); }
     .wa-context-note { margin: 0; font-size: 11px; color: var(--waasha-muted); }
+    .wa-context-manual { border-top: 1px solid var(--waasha-border); padding-top: 10px; display: flex; flex-direction: column; gap: 6px; }
+    .wa-manual-label { font-size: 11px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--waasha-muted); }
+    .wa-manual-row { display: flex; gap: 6px; align-items: center; }
+    .wa-manual-input { flex: 1; padding: 7px 8px; border-radius: 10px; border: 1px solid var(--waasha-border); font-size: 12px; background: white; }
+    .wa-manual-note { margin: 0; font-size: 10px; color: var(--waasha-muted); }
+    .wa-manual-error { margin: 0; font-size: 11px; color: #991B1B; background: #FEF2F2; border: 1px solid #FECACA; padding: 6px 8px; border-radius: 8px; }
+    .wa-manual-success { margin: 0; font-size: 11px; color: #065F46; background: #ECFDF5; border: 1px solid #A7F3D0; padding: 6px 8px; border-radius: 8px; }
+    .wa-btn--sm { padding: 7px 12px; font-size: 12px; border-radius: 10px; }
     .wa-section-head { display: flex; justify-content: space-between; align-items: flex-end; gap: 12px; margin-bottom: 10px; }
     .wa-section-title { font-size: 14px; font-weight: 800; color: var(--waasha-navy); letter-spacing: -0.01em; margin: 0; text-transform: uppercase; }
     .wa-section-sub { font-size: 12px; color: var(--waasha-muted); }
@@ -191,6 +211,10 @@ export class DiscoveryComponent implements OnInit {
   maxRadius: CustomerDiscoveryRadiusKm = 20;
   nextRadius: CustomerDiscoveryRadiusKm | null = null;
   locating = false;
+  manualLat: number | null = null;
+  manualLng: number | null = null;
+  manualError: string | null = null;
+  manualSuccess: string | null = null;
 
   get customerLoc(): { latitude: number; longitude: number } {
     return this.locationService.snapshot;
@@ -296,13 +320,35 @@ export class DiscoveryComponent implements OnInit {
       .tryUseBrowserGeolocation()
       .then(() => {
         this.locating = false;
+        this.manualSuccess = 'Location updated';
+        this.manualError = null;
         this.fetchProviders();
+        setTimeout(() => (this.manualSuccess = null), 2500);
       })
       .catch(() => {
         this.locating = false;
         this.error = 'Location permission denied. Using default location. You can also set location manually.';
         this.fetchProviders();
       });
+  }
+
+  applyManualLocation(): void {
+    this.manualError = null;
+    this.manualSuccess = null;
+    if (this.manualLat == null || this.manualLng == null) {
+      this.manualError = 'Enter both latitude and longitude.';
+      return;
+    }
+    const lat = Number(this.manualLat);
+    const lng = Number(this.manualLng);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng) || lat < -90 || lat > 90 || lng < -180 || lng > 180) {
+      this.manualError = 'Invalid coordinates. Latitude ±90, longitude ±180.';
+      return;
+    }
+    this.locationService.setLocation({ latitude: lat, longitude: lng });
+    this.manualSuccess = 'Manual location applied';
+    this.fetchProviders();
+    setTimeout(() => (this.manualSuccess = null), 2500);
   }
 
   trackProvider(_: number, p: ProviderCardDto): string {

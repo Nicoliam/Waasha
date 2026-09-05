@@ -1,5 +1,6 @@
 import { Component, Input } from '@angular/core';
 import { CommonModule } from '@angular/common';
+import { RouterLink } from '@angular/router';
 
 export interface MobileServiceDto {
   id: string;
@@ -18,7 +19,7 @@ export interface MobileServiceDto {
 @Component({
   selector: 'waasha-mobile-service-card',
   standalone: true,
-  imports: [CommonModule],
+  imports: [CommonModule, RouterLink],
   template: `
     <article class="wa-service" [attr.aria-label]="service.name">
       <div class="wa-service__head">
@@ -47,10 +48,18 @@ export interface MobileServiceDto {
       </div>
       <div class="wa-noimg" *ngIf="!service.images?.length">🖼️ No image — polished fallback</div>
 
-      <button type="button" class="wa-btn wa-btn-primary" [disabled]="service.status !== 'ACTIVE'">
-        {{ service.status === 'ACTIVE' ? 'Select — Secure Checkout' : 'Unavailable' }}
+      <a
+        *ngIf="providerId && service.status === 'ACTIVE'"
+        class="wa-btn wa-btn-primary wa-btn--link"
+        [routerLink]="['/marketplace/provider', providerId, 'service', service.id]"
+        [attr.aria-label]="'View service ' + service.name + ' details'"
+      >
+        Choose Date & Time
+      </a>
+      <button *ngIf="!providerId || service.status !== 'ACTIVE'" type="button" class="wa-btn wa-btn-primary" [disabled]="service.status !== 'ACTIVE'">
+        {{ service.status === 'ACTIVE' ? 'Choose Date & Time' : 'Unavailable' }}
       </button>
-      <p class="wa-note">Phase 2 attaches booking flow.</p>
+      <p class="wa-note">Availability lands in the next slice.</p>
     </article>
   `,
   styles: [`
@@ -70,14 +79,16 @@ export interface MobileServiceDto {
     .wa-img { aspect-ratio: 1; border-radius: 10px; overflow: hidden; background: #F6F8FA; border: 1px solid #E2E8F0; }
     .wa-img img { width: 100%; height: 100%; object-fit: cover; }
     .wa-noimg { display: grid; place-items: center; height: 80px; border-radius: 10px; background: #F6F8FA; border: 1px dashed #E2E8F0; color: #667085; font-size: 12px; }
-    .wa-btn { width: 100%; padding: 10px 14px; border-radius: 12px; border: 0; font-weight: 700; font-size: 13px; cursor: pointer; }
+    .wa-btn { width: 100%; padding: 10px 14px; border-radius: 12px; border: 0; font-weight: 700; font-size: 13px; cursor: pointer; text-decoration: none; display: inline-flex; align-items: center; justify-content: center; }
     .wa-btn-primary { background: #0B1F33; color: white; }
+    .wa-btn--link { cursor: pointer; }
     .wa-btn-primary:disabled { opacity: 0.6; }
     .wa-note { margin: 0; font-size: 10px; color: #667085; text-align: center; }
   `]
 })
 export class MobileServiceCardComponent {
   @Input({ required: true }) service!: MobileServiceDto;
+  @Input() providerId?: string | null = null;
   get serviceModeLabel(): string {
     if (this.service.serviceMode === 'PROVIDER_LOCATION') return 'At provider';
     if (this.service.serviceMode === 'CUSTOMER_LOCATION') return 'Home visit';

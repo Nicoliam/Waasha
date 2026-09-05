@@ -93,7 +93,7 @@ import { ProviderCardDto } from '../../../core/models/discovery-radius.model';
       <div class="wa-provider-card__actions">
         <a
           class="wa-btn wa-btn-ghost wa-btn--sm"
-          [routerLink]="['/providers', provider.id]"
+          [routerLink]="['/marketplace/provider', provider.id]"
           [queryParams]="customerLoc ? { lat: customerLoc.latitude, lng: customerLoc.longitude } : {}"
           aria-label="View {{ provider.displayName }} profile"
         >
@@ -101,7 +101,7 @@ import { ProviderCardDto } from '../../../core/models/discovery-radius.model';
         </a>
         <a
           class="wa-btn wa-btn-primary wa-btn--sm wa-btn--navy"
-          [routerLink]="['/providers', provider.id]"
+          [routerLink]="['/marketplace/provider', provider.id]"
           [queryParams]="customerLoc ? { lat: customerLoc.latitude, lng: customerLoc.longitude } : {}"
           [fragment]="'services'"
           aria-label="Book service with {{ provider.displayName }}"

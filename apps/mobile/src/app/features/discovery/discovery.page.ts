@@ -1,5 +1,6 @@
 import { Component, OnInit, inject } from '@angular/core';
 import { CommonModule } from '@angular/common';
+import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, Router } from '@angular/router';
 import { DiscoveryService, ProviderCardDto } from '../../core/services/discovery.service';
 import { MarketplaceRadiusConfigService } from '../../core/config/marketplace-radius.config';
@@ -12,7 +13,7 @@ import { MobileProviderCardComponent } from '../../shared/components/discovery/p
 @Component({
   selector: 'waasha-discovery-page',
   standalone: true,
-  imports: [CommonModule, RadiusExpansionComponent, MobileCategoryFilterComponent, MobileProviderCardComponent],
+  imports: [CommonModule, FormsModule, RadiusExpansionComponent, MobileCategoryFilterComponent, MobileProviderCardComponent],
   template: `
     <header class="wa-header">
       <div class="wa-header__inner">
@@ -42,6 +43,17 @@ import { MobileProviderCardComponent } from '../../shared/components/discovery/p
               {{ r }} km
             </button>
           </div>
+        </div>
+        <div class="wa-manual" role="group" aria-label="Manual location">
+          <label class="wa-manual-label">Manual location</label>
+          <div class="wa-manual-row">
+            <input type="number" step="0.0001" [(ngModel)]="manualLat" placeholder="Lat" aria-label="Latitude" class="wa-manual-input" />
+            <input type="number" step="0.0001" [(ngModel)]="manualLng" placeholder="Lng" aria-label="Longitude" class="wa-manual-input" />
+            <button type="button" class="wa-btn wa-btn-primary wa-btn--sm" (click)="applyManualLocation()">Apply</button>
+          </div>
+          <p *ngIf="manualError" class="wa-manual-error" role="alert">{{ manualError }}</p>
+          <p *ngIf="manualSuccess" class="wa-manual-success" role="status">{{ manualSuccess }}</p>
+          <p class="wa-manual-note">No precise address exposed.</p>
         </div>
       </div>
     </header>
@@ -127,6 +139,14 @@ import { MobileProviderCardComponent } from '../../shared/components/discovery/p
     .wa-header__radius-label { font-size: 10px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: #667085; }
     .wa-radius-pills { display: flex; gap: 6px; }
     .wa-pill { padding: 5px 10px; border-radius: 999px; border: 1px solid #E2E8F0; background: white; font-size: 11px; font-weight: 700; color: #667085; cursor: pointer; }
+    .wa-manual { display: flex; flex-direction: column; gap: 6px; padding-top: 8px; border-top: 1px solid #E2E8F0; }
+    .wa-manual-label { font-size: 10px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: #667085; }
+    .wa-manual-row { display: flex; gap: 6px; align-items: center; }
+    .wa-manual-input { flex: 1; padding: 6px 8px; border-radius: 10px; border: 1px solid #E2E8F0; font-size: 11px; background: white; }
+    .wa-manual-note { margin: 0; font-size: 10px; color: #667085; }
+    .wa-manual-error { margin: 0; font-size: 11px; color: #991B1B; background: #FEF2F2; border: 1px solid #FECACA; padding: 6px 8px; border-radius: 8px; }
+    .wa-manual-success { margin: 0; font-size: 11px; color: #065F46; background: #ECFDF5; border: 1px solid #A7F3D0; padding: 6px 8px; border-radius: 8px; }
+    .wa-btn--sm { padding: 6px 10px; font-size: 11px; border-radius: 10px; }
     .wa-pill.active { background: #0B1F33; color: white; border-color: #0B1F33; }
     .wa-main { max-width: 560px; margin: 0 auto; padding: 16px 16px 24px; display: flex; flex-direction: column; gap: 16px; }
     .wa-hero { display: flex; flex-direction: column; gap: 4px; }
@@ -176,6 +196,10 @@ export class DiscoveryPage implements OnInit {
   maxRadius: CustomerDiscoveryRadiusKm = 20;
   nextRadius: CustomerDiscoveryRadiusKm | null = null;
   locating = false;
+  manualLat: number | null = null;
+  manualLng: number | null = null;
+  manualError: string | null = null;
+  manualSuccess: string | null = null;
 
   get customerLoc(): { latitude: number; longitude: number } {
     return this.locationService.snapshot;
@@ -280,13 +304,20 @@ export class DiscoveryPage implements OnInit {
   useMyLocation(): void {
     this.locating = true;
     this.locationService.tryUseBrowserGeolocation().then(() => {
-      this.locating = false;
-      this.fetchProviders();
+      this.locating = false; this.manualSuccess = 'Location updated'; this.manualError = null; this.fetchProviders(); setTimeout(() => this.manualSuccess = null, 2500);
     }).catch(() => {
       this.locating = false;
       this.error = 'Location permission denied. Using default location.';
       this.fetchProviders();
     });
+  }
+
+  applyManualLocation(): void {
+    this.manualError = null; this.manualSuccess = null;
+    if (this.manualLat == null || this.manualLng == null) { this.manualError = 'Enter both latitude and longitude.'; return; }
+    const lat = Number(this.manualLat); const lng = Number(this.manualLng);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng) || lat < -90 || lat > 90 || lng < -180 || lng > 180) { this.manualError = 'Invalid coordinates. Latitude ±90, longitude ±180.'; return; }
+    this.locationService.setLocation({ latitude: lat, longitude: lng }); this.manualSuccess = 'Manual location applied'; this.fetchProviders(); setTimeout(() => this.manualSuccess = null, 2500);
   }
 
   trackProvider(_: number, p: ProviderCardDto): string { return p.id; }

@@ -4,6 +4,15 @@ import { authGuard } from './core/guards/auth.guard';
 export const routes: Routes = [
   { path: '', loadComponent: () => import('./features/discovery/discovery.page').then((m) => m.DiscoveryPage) },
   { path: 'discovery', loadComponent: () => import('./features/discovery/discovery.page').then((m) => m.DiscoveryPage) },
+  { path: 'marketplace', loadComponent: () => import('./features/discovery/discovery.page').then((m) => m.DiscoveryPage) },
+  {
+    path: 'marketplace/provider/:providerId',
+    loadComponent: () => import('./features/provider/provider-profile.page').then((m) => m.ProviderProfilePage),
+  },
+  {
+    path: 'marketplace/provider/:providerId/service/:serviceId',
+    loadComponent: () => import('./features/provider/service-detail.page').then((m) => m.MobileServiceDetailPage),
+  },
   { path: 'providers/:id', loadComponent: () => import('./features/provider/provider-profile.page').then((m) => m.ProviderProfilePage) },
   { path: 'auth/login', loadComponent: () => import('./features/auth/login.component').then((m) => m.LoginComponent) },
   { path: 'auth/register', loadComponent: () => import('./features/auth/register.component').then((m) => m.RegisterComponent) },

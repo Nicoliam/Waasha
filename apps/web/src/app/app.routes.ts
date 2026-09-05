@@ -5,6 +5,17 @@ export const routes: Routes = [
   // Customer discovery — primary home per Phase 1 (no auth required for marketplace browsing)
   { path: '', loadComponent: () => import('./features/discovery/discovery.component').then((m) => m.DiscoveryComponent) },
   { path: 'discovery', loadComponent: () => import('./features/discovery/discovery.component').then((m) => m.DiscoveryComponent) },
+  { path: 'marketplace', loadComponent: () => import('./features/discovery/discovery.component').then((m) => m.DiscoveryComponent) },
+  // Slice 2 canonical provider + service detail
+  {
+    path: 'marketplace/provider/:providerId',
+    loadComponent: () => import('./features/provider/provider-profile.component').then((m) => m.ProviderProfileComponent),
+  },
+  {
+    path: 'marketplace/provider/:providerId/service/:serviceId',
+    loadComponent: () => import('./features/provider/service-detail.component').then((m) => m.ServiceDetailComponent),
+  },
+  // Legacy alias preserved for Phase 1 deep links
   {
     path: 'providers/:id',
     loadComponent: () => import('./features/provider/provider-profile.component').then((m) => m.ProviderProfileComponent),

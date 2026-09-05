@@ -3,7 +3,9 @@ import { CommonModule } from '@angular/common';
 import { ActivatedRoute, RouterLink } from '@angular/router';
 import { MarketplaceService, ProviderProfileDto } from '../../core/services/marketplace.service';
 import { CustomerLocationService } from '../../core/services/customer-location.service';
-import { MobileServiceCardComponent } from '../../shared/components/discovery/service-card.component';
+import { DiscoveryService } from '../../core/services/discovery.service';
+import { ServiceCategory } from '../../core/models/discovery-radius.model';
+import { MobileServiceCardComponent, MobileServiceDto } from '../../shared/components/discovery/service-card.component';
 
 @Component({
   selector: 'waasha-mobile-provider-profile',
@@ -11,14 +13,17 @@ import { MobileServiceCardComponent } from '../../shared/components/discovery/se
   imports: [CommonModule, RouterLink, MobileServiceCardComponent],
   template: `
     <div class="wa-profile">
-      <a routerLink="/discovery" class="wa-back">← Back to discovery</a>
+      <a routerLink="/marketplace" class="wa-back">← Back to marketplace</a>
 
       <div *ngIf="loading" class="wa-card wa-loading" role="status">Loading provider…</div>
 
       <div *ngIf="error && !loading" class="wa-card wa-error" role="alert">
         <p class="wa-error__title">Couldn't load provider</p>
         <p class="wa-error__msg">{{ error }}</p>
-        <button type="button" class="wa-btn wa-btn-primary" (click)="retry()">Retry</button>
+        <div class="wa-error__actions">
+          <button type="button" class="wa-btn wa-btn-primary" (click)="retry()">Retry</button>
+          <a routerLink="/marketplace" class="wa-btn wa-btn-ghost">Back to marketplace</a>
+        </div>
       </div>
 
       <ng-container *ngIf="!loading && !error && provider">
@@ -48,7 +53,7 @@ import { MobileServiceCardComponent } from '../../shared/components/discovery/se
               <span class="wa-stat__l">{{ provider.reviewCount }} reviews</span>
             </div>
             <div class="wa-stat">
-              <span class="wa-stat__v">{{ provider.services.length }}</span>
+              <span class="wa-stat__v">{{ services.length }}</span>
               <span class="wa-stat__l">services</span>
             </div>
             <div class="wa-stat">
@@ -70,18 +75,31 @@ import { MobileServiceCardComponent } from '../../shared/components/discovery/se
           <h2 class="wa-section-title">Services</h2>
           <p class="wa-section-sub">Max 3 images per service. Secure Checkout.</p>
 
-          <div *ngIf="provider.services.length === 0" class="wa-card wa-empty">
-            <p class="wa-empty__title">No active services yet</p>
-            <p class="wa-empty__sub">This provider hasn't published services.</p>
+          <div class="wa-service-filter" *ngIf="serviceCategories.length > 0" role="group" aria-label="Filter services by category">
+            <button type="button" class="wa-pill" [class.active]="!selectedCategoryId" (click)="setCategory(null)">All</button>
+            <button *ngFor="let c of serviceCategories" type="button" class="wa-pill" [class.active]="selectedCategoryId === c.id || selectedCategoryId === c.code" (click)="setCategory(c.id)">{{ c.name }}</button>
           </div>
 
-          <div *ngIf="provider.services.length > 0" class="wa-services">
-            <waasha-mobile-service-card *ngFor="let svc of provider.services" [service]="svc" />
+          <div *ngIf="servicesLoading" class="wa-skeletons" role="status" aria-label="Loading services">
+            <div class="wa-skeleton" *ngFor="let i of [1,2]"></div>
           </div>
 
-          <div class="wa-cta">
-            <p class="wa-cta__note">Cash change requested flow is server-authoritative.</p>
-            <button type="button" class="wa-btn wa-btn-primary" disabled>Continue to booking — Phase 2</button>
+          <div *ngIf="servicesError && !servicesLoading" class="wa-card wa-error wa-error--inline" role="alert">
+            <p class="wa-error__title">Couldn't load services</p>
+            <p class="wa-error__msg">{{ servicesError }}</p>
+            <button type="button" class="wa-btn wa-btn-primary" (click)="loadServices()">Retry</button>
+          </div>
+
+          <div *ngIf="!servicesLoading && !servicesError && services.length === 0" class="wa-card wa-empty">
+            <p class="wa-empty__title">{{ selectedCategoryId ? 'No services in this category' : 'No active services yet' }}</p>
+            <p class="wa-empty__sub">{{ selectedCategoryId ? 'Try another category.' : "This provider hasn't published services." }}</p>
+            <button *ngIf="selectedCategoryId" type="button" class="wa-btn wa-btn-ghost" style="margin-top:10px; width:100%" (click)="setCategory(null)">Clear filter</button>
+          </div>
+
+          <div *ngIf="!servicesLoading && !servicesError && services.length > 0" class="wa-services">
+            <a *ngFor="let svc of services" [routerLink]="['/marketplace/provider', provider.id, 'service', svc.id]" class="wa-service-link" [attr.aria-label]="'View service ' + svc.name">
+              <waasha-mobile-service-card [service]="svc" [providerId]="provider.id" />
+            </a>
           </div>
         </section>
       </ng-container>
@@ -123,19 +141,35 @@ import { MobileServiceCardComponent } from '../../shared/components/discovery/se
     .wa-empty__title { margin: 0; font-weight: 800; color: #0B1F33; font-size: 13px; }
     .wa-empty__sub { margin: 6px 0 0; font-size: 12px; color: #667085; }
     .wa-services { display: flex; flex-direction: column; gap: 10px; }
-    .wa-cta { margin-top: 14px; display: flex; flex-direction: column; gap: 8px; }
-    .wa-cta__note { margin: 0; font-size: 11px; color: #667085; text-align: center; }
+    .wa-service-filter { display: flex; gap: 6px; overflow-x: auto; padding: 4px 0 8px; scrollbar-width: none; }
+    .wa-service-filter .wa-pill { padding: 6px 10px; border-radius: 999px; border: 1px solid #E2E8F0; background: white; font-size: 11px; font-weight: 700; color: #667085; cursor: pointer; flex-shrink: 0; }
+    .wa-service-filter .wa-pill.active { background: #0B1F33; color: white; border-color: #0B1F33; }
+    .wa-skeletons { display: flex; flex-direction: column; gap: 10px; }
+    .wa-skeleton { height: 120px; border-radius: 16px; background: linear-gradient(90deg, #F1F5F9 25%, #E2E8F0 37%, #F1F5F9 63%); background-size: 400% 100%; animation: shimmer 1.4s ease infinite; border: 1px solid #E2E8F0; }
+    @keyframes shimmer { 0% { background-position: 100% 0; } 100% { background-position: 0 0; } }
+    .wa-error--inline { text-align: center; }
+    .wa-error__actions { display: flex; gap: 8px; margin-top: 8px; }
+    .wa-btn-ghost { background: #F6F8FA; color: #0B1F33; border: 1px solid #E2E8F0; width: 100%; }
+    .wa-service-link { text-decoration: none; color: inherit; display: block; }
+    .wa-service-link:focus-visible { outline: 2px solid #19B6A5; outline-offset: 2px; border-radius: 16px; }
   `]
 })
 export class ProviderProfilePage implements OnInit {
   private readonly marketplace = inject(MarketplaceService);
   private readonly locationService = inject(CustomerLocationService);
+  private readonly discovery = inject(DiscoveryService);
   private readonly route = inject(ActivatedRoute);
 
   provider: ProviderProfileDto | null = null;
   loading = true;
   error: string | null = null;
   private providerId = '';
+
+  services: MobileServiceDto[] = [];
+  servicesLoading = false;
+  servicesError: string | null = null;
+  selectedCategoryId: string | null = null;
+  serviceCategories: ServiceCategory[] = [];
 
   get tierLabel(): string {
     if (!this.provider) return '';
@@ -145,37 +179,43 @@ export class ProviderProfilePage implements OnInit {
   }
 
   ngOnInit(): void {
-    this.providerId = this.route.snapshot.paramMap.get('id') ?? '';
+    this.providerId = this.route.snapshot.paramMap.get('providerId') ?? this.route.snapshot.paramMap.get('id') ?? '';
+    this.route.paramMap.subscribe((pm) => {
+      const next = pm.get('providerId') ?? pm.get('id') ?? '';
+      if (next && next !== this.providerId) { this.providerId = next; this.load(); }
+    });
     this.load();
+    this.discovery.fetchCategories().subscribe({ next: (res) => this.serviceCategories = res.data, error: () => {} });
   }
 
-  retry(): void {
-    this.load();
+  retry(): void { this.load(); }
+  setCategory(catId: string | null): void { this.selectedCategoryId = catId; this.loadServices(); }
+
+  loadServices(): void {
+    if (!this.providerId) return;
+    this.servicesLoading = true; this.servicesError = null;
+    this.marketplace.fetchProviderServices(this.providerId, { categoryId: this.selectedCategoryId ?? undefined, page: 1, perPage: 50 }).subscribe({
+      next: (res) => { this.servicesLoading = false; this.services = (res.data ?? []).filter((s) => s.status === 'ACTIVE').map((s) => ({ ...s, images: (s.images ?? []).slice(0,3) } as MobileServiceDto)); },
+      error: (err) => { this.servicesLoading = false; const raw = err?.error?.error?.message ?? err?.message ?? 'Failed to load services'; this.servicesError = raw.includes('SQL') || raw.includes('prisma') ? 'Something went wrong. Please try again.' : raw; },
+    });
   }
 
   private load(): void {
-    if (!this.providerId) {
-      this.loading = false;
-      this.error = 'Invalid provider identifier';
-      return;
-    }
-    this.loading = true;
-    this.error = null;
+    if (!this.providerId) { this.loading = false; this.error = 'Invalid provider identifier'; return; }
+    this.loading = true; this.error = null;
     const qLat = this.route.snapshot.queryParamMap.get('lat');
     const qLng = this.route.snapshot.queryParamMap.get('lng');
     let loc: { latitude: number; longitude: number } | undefined;
-    if (qLat && qLng) {
-      const lat = Number(qLat); const lng = Number(qLng);
-      if (Number.isFinite(lat) && Number.isFinite(lng)) loc = { latitude: lat, longitude: lng };
-    } else {
-      loc = this.locationService.snapshot;
-    }
+    if (qLat && qLng) { const lat = Number(qLat); const lng = Number(qLng); if (Number.isFinite(lat) && Number.isFinite(lng)) loc = { latitude: lat, longitude: lng }; }
+    else { loc = this.locationService.snapshot; }
     this.marketplace.fetchProviderProfile(this.providerId, loc).subscribe({
-      next: (res) => { this.loading = false; this.provider = res.data; },
+      next: (res) => { this.loading = false; this.provider = res.data; this.loadServices(); },
       error: (err) => {
         this.loading = false;
         const raw = err?.error?.error?.message ?? err?.message ?? 'Failed to load provider';
-        this.error = raw.includes('SQL') || raw.includes('prisma') ? 'Something went wrong. Please try again.' : raw;
+        const status = err?.status;
+        if (status === 404 || raw.toLowerCase().includes('not found')) this.error = 'Provider not found. It may be inactive or the link is incorrect.';
+        else this.error = raw.includes('SQL') || raw.includes('prisma') ? 'Something went wrong. Please try again.' : raw;
       },
     });
   }
