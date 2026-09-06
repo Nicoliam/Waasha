@@ -33,6 +33,10 @@ export const env = {
   }),
   JWT_EXPIRES_IN: process.env.JWT_EXPIRES_IN ?? '1h',
   CORS_ORIGIN: (process.env.CORS_ORIGIN ?? 'http://localhost:4200').split(','),
+  // Paystack — isolated behind provider abstraction, never hard-coded
+  PAYSTACK_SECRET_KEY: process.env.PAYSTACK_SECRET_KEY ?? '',
+  PAYSTACK_PUBLIC_KEY: process.env.PAYSTACK_PUBLIC_KEY ?? '',
+  PAYSTACK_WEBHOOK_SECRET: process.env.PAYSTACK_WEBHOOK_SECRET ?? process.env.PAYSTACK_SECRET_KEY ?? '',
 } as const;
 
 // Fail-fast in production if weak placeholder is in use (covers cases where requireEnv fallback bypassed in non-prod startup)

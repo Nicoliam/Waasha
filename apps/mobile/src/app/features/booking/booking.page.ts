@@ -6,6 +6,7 @@ import { Router } from '@angular/router';
 import { MarketplaceService } from '../../core/services/marketplace.service';
 import { BookingService } from '../../core/services/booking.service';
 import { CustomerLocationService } from '../../core/services/customer-location.service';
+import { PaymentService, PaymentMethod } from '../../core/services/payment.service';
 import { ServiceDto } from '../../core/services/marketplace.service';
 
 @Component({
@@ -108,7 +109,7 @@ import { ServiceDto } from '../../core/services/marketplace.service';
 
       <section *ngIf="successBooking" class="wa-card wa-success" role="status">
         <h2 class="wa-success__title">Booking created</h2>
-        <p class="wa-success__sub">Status: <strong>{{ successBooking.status }}</strong> — pending provider acceptance.</p>
+        <p class="wa-success__sub">Status: <strong>{{ successBooking.status }}</strong> — pending provider acceptance. Payment separate from completion.</p>
         <dl class="wa-summary__list">
           <div class="wa-summary__row"><dt>Booking ID</dt><dd class="wa-mono">{{ successBooking.id }}</dd></div>
           <div class="wa-summary__row"><dt>Service</dt><dd>{{ successBooking.items?.[0]?.serviceNameSnapshot || service?.name }}</dd></div>
@@ -116,6 +117,45 @@ import { ServiceDto } from '../../core/services/marketplace.service';
           <div class="wa-summary__row"><dt>Duration</dt><dd>{{ successBooking.items?.[0]?.durationMinutes ?? service?.durationMinutes }} min</dd></div>
           <div class="wa-summary__row"><dt>Scheduled</dt><dd>{{ successBooking.scheduledStart | date:'medium' }}</dd></div>
         </dl>
+        <!-- Mobile payment selector -->
+        <div class="wa-payment" *ngIf="!payment" aria-label="Select payment method">
+          <h3 class="wa-payment__title">Select Payment Method</h3>
+          <p class="wa-payment__sub">Amount server-authoritative: R{{ successBooking.totalAmount ?? successBooking.items?.[0]?.unitPrice ?? service?.price }} {{ successBooking.currency }}</p>
+          <div class="wa-payment__options">
+            <label class="wa-payment__option" [class.active]="selectedPaymentMethod === 'waasha_payment'"><input type="radio" name="payMethodM" value="waasha_payment" [(ngModel)]="selectedPaymentMethod" /> Waasha Payment</label>
+            <label class="wa-payment__option" [class.active]="selectedPaymentMethod === 'cash'"><input type="radio" name="payMethodM" value="cash" [(ngModel)]="selectedPaymentMethod" /> Cash</label>
+            <label class="wa-payment__option" [class.active]="selectedPaymentMethod === 'eft'"><input type="radio" name="payMethodM" value="eft" [(ngModel)]="selectedPaymentMethod" /> EFT</label>
+          </div>
+          <div *ngIf="selectedPaymentMethod === 'cash'" class="wa-cash-extra">
+            <label class="wa-radio"><input type="checkbox" [(ngModel)]="cashChangeRequested" /> Cash change requested</label>
+            <div *ngIf="cashChangeRequested" class="wa-field">
+              <label class="wa-label">Paying with (R)</label>
+              <input type="number" class="wa-input" [(ngModel)]="cashAmountTendered" placeholder="e.g. 200" />
+              <p class="wa-hint" *ngIf="cashChangeAmount != null">Change: R{{ cashChangeAmount }} — Provider notified.</p>
+            </div>
+          </div>
+          <div *ngIf="paymentError" class="wa-error wa-error--inline" role="alert">
+            <p class="wa-error__title">{{ paymentErrorTitle }}</p>
+            <p class="wa-error__msg">{{ paymentErrorMsg }}</p>
+          </div>
+          <button type="button" class="wa-btn wa-btn-primary wa-btn--block" [disabled]="!selectedPaymentMethod || paymentCreating" (click)="createPayment()">{{ paymentCreating ? 'Processing…' : 'Confirm payment method' }}</button>
+          <p class="wa-hint" style="text-align:center">Payment does not mark service completed.</p>
+        </div>
+        <div *ngIf="payment" class="wa-payment-state" role="status">
+          <h3 class="wa-payment__title">Payment {{ payment.status }}</h3>
+          <dl class="wa-summary__list">
+            <div class="wa-summary__row"><dt>Method</dt><dd>{{ payment.method }}</dd></div>
+            <div class="wa-summary__row"><dt>Amount</dt><dd>R{{ payment.amount }} {{ payment.currency }}</dd></div>
+            <div class="wa-summary__row"><dt>Status</dt><dd>{{ payment.status }}</dd></div>
+          </dl>
+          <p class="wa-hint" *ngIf="payment.method === 'eft' && payment.status === 'PENDING'">EFT pending — not automatically PAID.</p>
+          <p class="wa-hint" *ngIf="payment.method === 'waasha_payment' && payment.status === 'PROCESSING'">Waasha Payment processing.</p>
+          <p class="wa-hint" *ngIf="payment.status === 'PAID' && payment.method === 'cash'">Cash change requested — Provider has been notified to bring R{{ cashChangeAmount }} change.</p>
+          <div class="wa-payment__actions">
+            <button type="button" class="wa-btn wa-btn-ghost wa-btn--sm" (click)="refreshPayment()" [disabled]="paymentRefreshing">Refresh</button>
+            <button type="button" class="wa-btn wa-btn-ghost wa-btn--sm" (click)="payment=null;selectedPaymentMethod=null" *ngIf="payment.status==='FAILED'">Try another</button>
+          </div>
+        </div>
         <div class="wa-success__actions">
           <a routerLink="/discovery" class="wa-btn wa-btn-ghost">Back to marketplace</a>
           <a [routerLink]="['/marketplace/provider', providerId]" class="wa-btn wa-btn-primary">View provider</a>
@@ -169,6 +209,15 @@ import { ServiceDto } from '../../core/services/marketplace.service';
     .wa-success__sub { margin:6px 0 12px; font-size:12px; color:#065F46; }
     .wa-mono { font-family:monospace; font-size:11px; word-break:break-all; }
     .wa-success__actions { display:flex; gap:8px; justify-content:center; margin-top:14px; flex-wrap:wrap; }
+    .wa-payment { text-align:left; margin-top:12px; padding-top:12px; border-top:1px solid #A7F3D0; display:flex; flex-direction:column; gap:10px; }
+    .wa-payment__title { margin:0; font-size:13px; font-weight:800; color:#065F46; }
+    .wa-payment__sub { margin:0; font-size:11px; color:#065F46; }
+    .wa-payment__options { display:flex; flex-direction:column; gap:8px; }
+    .wa-payment__option { display:flex; gap:8px; align-items:center; padding:10px; border:1px solid #E2E8F0; border-radius:12px; background:white; font-size:12px; font-weight:600; cursor:pointer; }
+    .wa-payment__option.active { border-color:#19B6A5; background:#F0FDFA; }
+    .wa-cash-extra { display:flex; flex-direction:column; gap:8px; padding:10px; background:white; border:1px solid #E2E8F0; border-radius:12px; }
+    .wa-payment-state { text-align:left; margin-top:12px; padding:12px; background:white; border:1px solid #E2E8F0; border-radius:12px; display:flex; flex-direction:column; gap:8px; }
+    .wa-payment__actions { display:flex; gap:8px; justify-content:center; flex-wrap:wrap; }
   `]
 })
 export class MobileBookingPage implements OnInit {
@@ -176,6 +225,7 @@ export class MobileBookingPage implements OnInit {
   private readonly marketplace = inject(MarketplaceService);
   private readonly bookingService = inject(BookingService);
   private readonly locationService = inject(CustomerLocationService);
+  private readonly paymentService = inject(PaymentService);
 
   providerId = '';
   serviceId = '';
@@ -205,10 +255,30 @@ export class MobileBookingPage implements OnInit {
   unauthorizedError = false;
   successBooking: any = null;
 
+  selectedPaymentMethod: PaymentMethod | null = null;
+  payment: any = null;
+  paymentCreating = false;
+  paymentRefreshing = false;
+  paymentError = false;
+  paymentErrorTitle = '';
+  paymentErrorMsg = '';
+  cashChangeRequested = false;
+  cashAmountTendered: number | null = null;
+  private paymentIdempotencyKey: string | null = null;
+
   get canCreate(): boolean {
     if (!this.selectedSlot) return false;
     if (this.locForm.latitude == null || this.locForm.longitude == null) return false;
     return Number.isFinite(Number(this.locForm.latitude)) && Number.isFinite(Number(this.locForm.longitude));
+  }
+
+  get cashChangeAmount(): number | null {
+    if (!this.cashChangeRequested || this.cashAmountTendered == null || !this.successBooking) return null;
+    const total = Number(this.successBooking.totalAmount ?? this.successBooking.items?.[0]?.unitPrice ?? this.service?.price ?? 0);
+    const tendered = Number(this.cashAmountTendered);
+    if (!Number.isFinite(total) || !Number.isFinite(tendered)) return null;
+    const c = Math.round((tendered - total) * 100) / 100;
+    return c >= 0 ? c : 0;
   }
 
   ngOnInit(): void {
@@ -276,6 +346,24 @@ export class MobileBookingPage implements OnInit {
         else { this.createError = true; this.createErrorTitle = "Couldn't create booking"; this.createErrorMsg = msg; }
       },
     });
+  }
+  createPayment(): void {
+    if (!this.successBooking || !this.selectedPaymentMethod) return;
+    this.paymentCreating = true; this.paymentError = false;
+    if (!this.paymentIdempotencyKey) this.paymentIdempotencyKey = `waasha_${this.successBooking.id}_${Date.now()}`;
+    const payload: any = { bookingId: this.successBooking.id, method: this.selectedPaymentMethod, idempotencyKey: this.paymentIdempotencyKey };
+    if (this.selectedPaymentMethod === 'cash' && this.cashChangeRequested) payload.cashDetails = { changeRequested: true, amountTendered: this.cashAmountTendered != null ? Number(this.cashAmountTendered) : null };
+    this.paymentService.createIntent(payload).subscribe({
+      next: (res) => { this.paymentCreating = false; this.payment = res.data; window.scrollTo({ top: 0, behavior: 'smooth' }); },
+      error: (err) => {
+        this.paymentCreating = false; const code = err?.error?.error?.code ?? ''; const msg = err?.error?.error?.message ?? err?.message ?? 'Failed';
+        this.paymentError = true; this.paymentErrorTitle = code === 'CASH_CAP_EXCEEDED' ? 'Cash not available' : code === 'PAYSTACK_NOT_CONFIGURED' ? 'Waasha Payment unavailable' : 'Payment failed'; this.paymentErrorMsg = msg;
+      },
+    });
+  }
+  refreshPayment(): void {
+    if (!this.successBooking) return; this.paymentRefreshing = true;
+    this.paymentService.getByBooking(this.successBooking.id).subscribe({ next: (res) => { this.paymentRefreshing = false; this.payment = res.data; }, error: () => { this.paymentRefreshing = false; } });
   }
   private loadService(): void {
     this.loadingService = true; this.serviceError = null;

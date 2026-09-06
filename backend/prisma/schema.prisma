@@ -487,6 +487,7 @@ model Booking {
   payment          Payment?
   review           Review?
   cashLedgerEntry  CashLedgerEntry?
+  cashPaymentDetail CashPaymentDetail?
 
   @@map("bookings")
   @@index([customerId])
@@ -555,25 +556,79 @@ model BookingLocation {
 // ── Payments / Finance ──────────────────────────────────────────
 
 model Payment {
-  id               String   @id @default(cuid())
-  uuid             String   @unique @default(uuid())
-  bookingId        String   @unique @map("booking_id")
-  customerId       String   @map("customer_id")
-  amount           Decimal  @db.Decimal(12, 2)
-  currency         String   @default("ZAR")
-  gateway          String   @default("paystack") // paystack, manual_cash, manual_eft
-  method           String   // waasha_payment, cash, eft
-  status           String   @default("PENDING")
-  commissionRate   Decimal? @db.Decimal(5,2) @map("commission_rate")
-  commissionAmount Decimal? @db.Decimal(12,2) @map("commission_amount")
-  createdAt        DateTime @default(now()) @map("created_at")
-  updatedAt        DateTime @updatedAt @map("updated_at")
+  id                         String    @id @default(cuid())
+  uuid                       String    @unique @default(uuid())
+  bookingId                  String    @unique @map("booking_id")
+  customerId                 String    @map("customer_id")
+  providerId                 String?   @map("provider_id")
+  businessUnitId             String?   @map("business_unit_id")
+  amount                     Decimal   @db.Decimal(12, 2)
+  currency                   String    @default("ZAR")
+  gateway                    String    @default("paystack") // paystack, manual_cash, manual_eft
+  method                     String    // waasha_payment, cash, eft
+  status                     String    @default("PENDING") // PENDING, PROCESSING, PAID, FAILED, CANCELLED, REFUNDED
+  commissionRate             Decimal?  @db.Decimal(5,2) @map("commission_rate")
+  commissionAmount           Decimal?  @db.Decimal(12,2) @map("commission_amount")
+  // Slice 4 — provider abstraction + idempotency + webhook reconciliation
+  idempotencyKey             String?   @unique @map("idempotency_key")
+  gatewayTransactionId       String?   @map("gateway_transaction_id")
+  gatewayResponseReference   String?   @map("gateway_response_reference")
+  providerReference          String?   @map("provider_reference")
+  internalReference          String?   @map("internal_reference")
+  initiatedAt                DateTime? @map("initiated_at")
+  paidAt                     DateTime? @map("paid_at")
+  failedAt                   DateTime? @map("failed_at")
+  refundedAt                 DateTime? @map("refunded_at")
+  failureReason              String?   @db.Text @map("failure_reason")
+  metadata                   Json?     @map("metadata")
+  createdAt                  DateTime  @default(now()) @map("created_at")
+  updatedAt                  DateTime  @updatedAt @map("updated_at")
 
-  booking Booking @relation(fields: [bookingId], references: [id])
+  booking Booking        @relation(fields: [bookingId], references: [id])
+  events  PaymentEvent[]
 
   @@map("payments")
   @@index([bookingId])
   @@index([status])
+  @@index([customerId])
+  @@index([providerId])
+  @@index([idempotencyKey])
+  @@index([gatewayTransactionId])
+}
+
+model PaymentEvent {
+  id               String   @id @default(cuid())
+  paymentId        String   @map("payment_id")
+  eventType        String   @map("event_type")
+  gatewayEventId   String?  @unique @map("gateway_event_id")
+  payload          Json?    @map("payload_json")
+  processingStatus String   @default("PROCESSED") @map("processing_status") // PROCESSED, DUPLICATE, FAILED
+  createdAt        DateTime @default(now()) @map("created_at")
+  processedAt      DateTime? @map("processed_at")
+
+  payment Payment @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+
+  @@map("payment_events")
+  @@index([paymentId])
+  @@index([gatewayEventId])
+  @@index([eventType])
+}
+
+model CashPaymentDetail {
+  id                  String    @id @default(cuid())
+  bookingId           String    @unique @map("booking_id")
+  changeRequested     Boolean   @default(false) @map("change_requested")
+  amountTendered      Decimal?  @db.Decimal(12,2) @map("amount_tendered")
+  changeAmount        Decimal?  @db.Decimal(12,2) @map("change_amount")
+  providerNotifiedAt  DateTime? @map("provider_notified_at")
+  confirmedByProviderAt DateTime? @map("confirmed_by_provider_at")
+  createdAt           DateTime  @default(now()) @map("created_at")
+  updatedAt           DateTime  @updatedAt @map("updated_at")
+
+  booking Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+
+  @@map("cash_payment_details")
+  @@index([bookingId])
 }
 
 // ── Reviews ─────────────────────────────────────────────────────
