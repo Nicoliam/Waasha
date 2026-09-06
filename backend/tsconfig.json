@@ -13,6 +13,7 @@
     "declaration": false,
     "sourceMap": true,
     "moduleResolution": "node",
+    "experimentalDecorators": true,
     "types": ["node", "jest"],
     "isolatedModules": true
   },

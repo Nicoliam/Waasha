@@ -18,6 +18,17 @@ export const routes: Routes = [
     loadComponent: () => import('./features/booking/booking.page').then((m) => m.MobileBookingPage),
   },
   { path: 'providers/:id', loadComponent: () => import('./features/provider/provider-profile.page').then((m) => m.ProviderProfilePage) },
+  // Slice 5 — provider booking management (provider auth required, same backend APIs as web)
+  {
+    path: 'provider/bookings',
+    loadComponent: () => import('./features/provider-bookings/provider-inbox.page').then((m) => m.ProviderInboxPage),
+    canActivate: [authGuard],
+  },
+  {
+    path: 'provider/bookings/:id',
+    loadComponent: () => import('./features/provider-bookings/provider-booking-detail.page').then((m) => m.ProviderBookingDetailPage),
+    canActivate: [authGuard],
+  },
   { path: 'auth/login', loadComponent: () => import('./features/auth/login.component').then((m) => m.LoginComponent) },
   { path: 'auth/register', loadComponent: () => import('./features/auth/register.component').then((m) => m.RegisterComponent) },
   { path: 'me', loadComponent: () => import('./features/auth/me.component').then((m) => m.MeComponent), canActivate: [authGuard] },

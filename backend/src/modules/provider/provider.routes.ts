@@ -121,6 +121,84 @@ router.put('/me/coverage', async (req: Request, res: Response) => {
   return res.json({ success: true, data: { coverageRadiusKm: updated.coverageRadiusKm } });
 });
 
+// ── Provider booking management — Phase 2 Slice 5 ───────────────────────────
+// All endpoints derive provider identity from the authenticated session.
+// Never accept providerId from the client as the source of authorization.
+router.get('/me/bookings', async (req: Request, res: Response) => {
+  const authUser = req.authUser!;
+  const schema = z.object({
+    status: z.string().optional(),
+    page: z.coerce.number().int().min(1).default(1),
+    perPage: z.coerce.number().int().min(1).max(50).default(20),
+  });
+  const parsed = schema.safeParse(req.query as any);
+  if (!parsed.success) {
+    return res.status(422).json({ success: false, error: { code: 'VALIDATION_ERROR', message: 'Invalid query', details: parsed.error.flatten() } });
+  }
+  try {
+    const { listProviderBookings } = await import('../bookings/provider-bookings.service');
+    const result = await listProviderBookings(authUser.userId, {
+      status: parsed.data.status,
+      page: parsed.data.page,
+      perPage: parsed.data.perPage,
+    });
+    return res.json({ success: true, data: result.bookings, meta: result.meta });
+  } catch (err: any) {
+    if (err.status) return res.status(err.status).json({ success: false, error: { code: err.code ?? 'ERROR', message: err.message, details: err.details } });
+    return res.status(500).json({ success: false, error: { code: 'INTERNAL_ERROR', message: 'Failed to load bookings' } });
+  }
+});
+
+router.get('/me/bookings/:id/navigation', async (req: Request, res: Response) => {
+  const authUser = req.authUser!;
+  const id = req.params.id as string;
+  if (!id) return res.status(422).json({ success: false, error: { code: 'VALIDATION_ERROR', message: 'Booking id required' } });
+  try {
+    const { getProviderBookingNavigation } = await import('../bookings/provider-bookings.service');
+    const nav = await getProviderBookingNavigation(authUser.userId, id);
+    return res.json({ success: true, data: nav });
+  } catch (err: any) {
+    if (err.status) return res.status(err.status).json({ success: false, error: { code: err.code ?? 'ERROR', message: err.message, details: err.details } });
+    return res.status(500).json({ success: false, error: { code: 'INTERNAL_ERROR', message: 'Failed to load navigation' } });
+  }
+});
+
+router.get('/me/bookings/:id', async (req: Request, res: Response) => {
+  const authUser = req.authUser!;
+  const id = req.params.id as string;
+  if (!id) return res.status(422).json({ success: false, error: { code: 'VALIDATION_ERROR', message: 'Booking id required' } });
+  try {
+    const { getProviderBookingDetail } = await import('../bookings/provider-bookings.service');
+    const booking = await getProviderBookingDetail(authUser.userId, id);
+    return res.json({ success: true, data: booking });
+  } catch (err: any) {
+    if (err.status) return res.status(err.status).json({ success: false, error: { code: err.code ?? 'ERROR', message: err.message, details: err.details } });
+    return res.status(500).json({ success: false, error: { code: 'INTERNAL_ERROR', message: 'Failed to load booking' } });
+  }
+});
+
+async function handleProviderBookingTransition(req: Request, res: Response, target: 'accept' | 'reject') {
+  const authUser = req.authUser!;
+  const id = req.params.id as string;
+  if (!id) return res.status(422).json({ success: false, error: { code: 'VALIDATION_ERROR', message: 'Booking id required' } });
+  try {
+    const svc = await import('../bookings/provider-bookings.service');
+    const result =
+      target === 'accept'
+        ? await svc.acceptProviderBooking(authUser.userId, id)
+        : await svc.rejectProviderBooking(authUser.userId, id);
+    return res.json({ success: true, data: result });
+  } catch (err: any) {
+    if (err.status) return res.status(err.status).json({ success: false, error: { code: err.code ?? 'ERROR', message: err.message, details: err.details } });
+    return res.status(500).json({ success: false, error: { code: 'INTERNAL_ERROR', message: 'Failed to update booking' } });
+  }
+}
+
+router.post('/me/bookings/:id/accept', async (req: Request, res: Response) => handleProviderBookingTransition(req, res, 'accept'));
+router.post('/me/bookings/:id/reject', async (req: Request, res: Response) => handleProviderBookingTransition(req, res, 'reject'));
+// Blueprint-canonical alias: rejection records DECLINED.
+router.post('/me/bookings/:id/decline', async (req: Request, res: Response) => handleProviderBookingTransition(req, res, 'reject'));
+
 // ── Provider own services — Phase 2 Slice 1 (authenticated, ownership enforced) ────
 // GET /api/v1/providers/me/services — own services (all statuses), paginated, max 3 images
 router.get('/me/services', async (req: Request, res: Response) => {

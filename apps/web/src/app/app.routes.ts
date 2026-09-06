@@ -24,6 +24,17 @@ export const routes: Routes = [
     path: 'providers/:id',
     loadComponent: () => import('./features/provider/provider-profile.component').then((m) => m.ProviderProfileComponent),
   },
+  // Slice 5 — provider booking management (provider auth required)
+  {
+    path: 'provider/bookings',
+    loadComponent: () => import('./features/provider-bookings/provider-inbox.component').then((m) => m.ProviderInboxComponent),
+    canActivate: [authGuard],
+  },
+  {
+    path: 'provider/bookings/:id',
+    loadComponent: () => import('./features/provider-bookings/provider-booking-detail.component').then((m) => m.ProviderBookingDetailComponent),
+    canActivate: [authGuard],
+  },
   { path: 'auth/login', loadComponent: () => import('./features/auth/login.component').then((m) => m.LoginComponent) },
   { path: 'auth/register', loadComponent: () => import('./features/auth/register.component').then((m) => m.RegisterComponent) },
   { path: 'me', loadComponent: () => import('./features/auth/me.component').then((m) => m.MeComponent), canActivate: [authGuard] },
