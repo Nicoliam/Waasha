@@ -35,6 +35,17 @@ export const routes: Routes = [
     loadComponent: () => import('./features/provider-bookings/provider-booking-detail.component').then((m) => m.ProviderBookingDetailComponent),
     canActivate: [authGuard],
   },
+  // Slice 6 — customer booking management (customer auth required, read-only)
+  {
+    path: 'bookings',
+    loadComponent: () => import('./features/bookings/my-bookings.component').then((m) => m.MyBookingsComponent),
+    canActivate: [authGuard],
+  },
+  {
+    path: 'bookings/:id',
+    loadComponent: () => import('./features/bookings/my-booking-detail.component').then((m) => m.MyBookingDetailComponent),
+    canActivate: [authGuard],
+  },
   { path: 'auth/login', loadComponent: () => import('./features/auth/login.component').then((m) => m.LoginComponent) },
   { path: 'auth/register', loadComponent: () => import('./features/auth/register.component').then((m) => m.RegisterComponent) },
   { path: 'me', loadComponent: () => import('./features/auth/me.component').then((m) => m.MeComponent), canActivate: [authGuard] },
