@@ -29,6 +29,13 @@ export const routes: Routes = [
     loadComponent: () => import('./features/provider-bookings/provider-booking-detail.page').then((m) => m.ProviderBookingDetailPage),
     canActivate: [authGuard],
   },
+  // Slice 8 — provider availability & scheduling (provider auth required, same backend APIs as web)
+  {
+    path: 'provider/availability',
+    loadComponent: () =>
+      import('./features/provider-availability/provider-availability.page').then((m) => m.ProviderAvailabilityPage),
+    canActivate: [authGuard],
+  },
   // Slice 6 — customer booking management (customer auth required, read-only, same backend APIs as web)
   {
     path: 'bookings',

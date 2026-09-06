@@ -348,4 +348,167 @@ router.get('/me/services/:serviceId', async (req: Request, res: Response) => {
   }
 });
 
+// ── Provider availability & scheduling — Phase 2 Slice 8 ────────────────────
+// Provider identity always comes from the authenticated session.
+// businessUnitId (T3) is verified against businesses owned by the session user.
+function availabilityError(res: Response, err: any, fallback: string) {
+  if (err && typeof err.status === 'number') {
+    return res.status(err.status).json({
+      success: false,
+      error: { code: err.code ?? 'ERROR', message: err.message, ...(err.details !== undefined ? { details: err.details } : {}) },
+    });
+  }
+  return res.status(500).json({ success: false, error: { code: 'INTERNAL_ERROR', message: fallback } });
+}
+
+function availabilityCtx(req: Request) {
+  return { ip: req.ip, userAgent: req.headers['user-agent'] as string | undefined };
+}
+
+router.get('/me/availability', async (req: Request, res: Response) => {
+  try {
+    const svc = await import('../availability/availability.service');
+    const data = await svc.getSchedule(req.authUser!.userId, (req.query.businessUnitId as string | undefined) ?? null);
+    return res.json({ success: true, data });
+  } catch (err: any) {
+    return availabilityError(res, err, 'Failed to load availability');
+  }
+});
+
+router.get('/me/availability/rules', async (req: Request, res: Response) => {
+  try {
+    const svc = await import('../availability/availability.service');
+    const data = await svc.listRules(req.authUser!.userId, (req.query.businessUnitId as string | undefined) ?? null);
+    return res.json({ success: true, data });
+  } catch (err: any) {
+    return availabilityError(res, err, 'Failed to load availability rules');
+  }
+});
+
+router.post('/me/availability/rules', async (req: Request, res: Response) => {
+  try {
+    const svc = await import('../availability/availability.service');
+    const data = await svc.createRule(req.authUser!.userId, req.body ?? {}, availabilityCtx(req));
+    return res.status(201).json({ success: true, data });
+  } catch (err: any) {
+    return availabilityError(res, err, 'Failed to create availability rule');
+  }
+});
+
+router.put('/me/availability/rules', async (req: Request, res: Response) => {
+  try {
+    const svc = await import('../availability/availability.service');
+    const data = await svc.replaceRules(req.authUser!.userId, req.body ?? {}, availabilityCtx(req));
+    return res.json({ success: true, data });
+  } catch (err: any) {
+    return availabilityError(res, err, 'Failed to replace availability rules');
+  }
+});
+
+router.patch('/me/availability/rules/:id', async (req: Request, res: Response) => {
+  try {
+    const svc = await import('../availability/availability.service');
+    const data = await svc.updateRule(req.authUser!.userId, req.params.id as string, req.body ?? {}, availabilityCtx(req));
+    return res.json({ success: true, data });
+  } catch (err: any) {
+    return availabilityError(res, err, 'Failed to update availability rule');
+  }
+});
+
+router.delete('/me/availability/rules/:id', async (req: Request, res: Response) => {
+  try {
+    const svc = await import('../availability/availability.service');
+    const data = await svc.deleteRule(
+      req.authUser!.userId,
+      req.params.id as string,
+      ((req.query.businessUnitId ?? req.body?.businessUnitId) as string | undefined) ?? null,
+      availabilityCtx(req),
+    );
+    return res.json({ success: true, data });
+  } catch (err: any) {
+    return availabilityError(res, err, 'Failed to delete availability rule');
+  }
+});
+
+router.get('/me/availability/exceptions', async (req: Request, res: Response) => {
+  try {
+    const svc = await import('../availability/availability.service');
+    const data = await svc.listExceptions(req.authUser!.userId, {
+      page: req.query.page,
+      perPage: req.query.perPage,
+      businessUnitId: (req.query.businessUnitId as string | undefined) ?? null,
+      upcomingOnly: req.query.upcomingOnly === 'true' || req.query.upcomingOnly === '1',
+    });
+    return res.json({ success: true, data: data.exceptions, meta: data.meta, timezone: data.timezone });
+  } catch (err: any) {
+    return availabilityError(res, err, 'Failed to load availability exceptions');
+  }
+});
+
+router.post('/me/availability/exceptions', async (req: Request, res: Response) => {
+  try {
+    const svc = await import('../availability/availability.service');
+    const data = await svc.createException(req.authUser!.userId, req.body ?? {}, availabilityCtx(req));
+    return res.status(201).json({ success: true, data });
+  } catch (err: any) {
+    return availabilityError(res, err, 'Failed to create availability exception');
+  }
+});
+
+router.patch('/me/availability/exceptions/:id', async (req: Request, res: Response) => {
+  try {
+    const svc = await import('../availability/availability.service');
+    const data = await svc.updateException(req.authUser!.userId, req.params.id as string, req.body ?? {}, availabilityCtx(req));
+    return res.json({ success: true, data });
+  } catch (err: any) {
+    return availabilityError(res, err, 'Failed to update availability exception');
+  }
+});
+
+router.delete('/me/availability/exceptions/:id', async (req: Request, res: Response) => {
+  try {
+    const svc = await import('../availability/availability.service');
+    const data = await svc.deleteException(
+      req.authUser!.userId,
+      req.params.id as string,
+      ((req.query.businessUnitId ?? req.body?.businessUnitId) as string | undefined) ?? null,
+      availabilityCtx(req),
+    );
+    return res.json({ success: true, data });
+  } catch (err: any) {
+    return availabilityError(res, err, 'Failed to delete availability exception');
+  }
+});
+
+router.get('/me/availability/conflicts', async (req: Request, res: Response) => {
+  try {
+    const svc = await import('../availability/availability.service');
+    const scope = await svc.resolveScope(req.authUser!.userId, (req.query.businessUnitId as string | undefined) ?? null);
+    const conflicts = await svc.findConflicts(req.authUser!.userId, scope);
+    return res.json({ success: true, data: { conflicts, timezone: scope.timezone } });
+  } catch (err: any) {
+    return availabilityError(res, err, 'Failed to check conflicts');
+  }
+});
+
+router.get('/me/availability/timezone', async (req: Request, res: Response) => {
+  try {
+    const svc = await import('../availability/availability.service');
+    const data = await svc.getTimezone(req.authUser!.userId);
+    return res.json({ success: true, data });
+  } catch (err: any) {
+    return availabilityError(res, err, 'Failed to load timezone');
+  }
+});
+
+router.put('/me/availability/timezone', async (req: Request, res: Response) => {
+  try {
+    const svc = await import('../availability/availability.service');
+    const data = await svc.updateTimezone(req.authUser!.userId, (req.body ?? {}).timezone, availabilityCtx(req));
+    return res.json({ success: true, data });
+  } catch (err: any) {
+    return availabilityError(res, err, 'Failed to update timezone');
+  }
+});
+
 export default router;
