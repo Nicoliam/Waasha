@@ -389,6 +389,26 @@ async function transitionBooking(
   return result;
 }
 
+async function notifyReview(updated: unknown, decision: 'ACCEPTED' | 'DECLINED'): Promise<void> {
+  // Slice 7 — post-commit customer notification. Never breaks the transition.
+  try {
+    const { notifyBookingReviewed } = await import('../notifications/booking-notifications');
+    const b = updated as any;
+    void notifyBookingReviewed(
+      {
+        id: b.id,
+        customerId: b.customerId,
+        providerId: b.providerId ?? null,
+        businessUnitId: b.businessUnitId ?? null,
+        scheduledStart: b.scheduledStart,
+        timezone: b.timezone ?? null,
+        items: (b.items ?? []).map((i: any) => ({ serviceNameSnapshot: i.serviceNameSnapshot ?? null })),
+      },
+      decision,
+    ).catch(() => {});
+  } catch {}
+}
+
 export async function acceptProviderBooking(providerUserId: string, bookingId: string) {
   const { updated, previousStatus } = await transitionBooking(
     providerUserId,
@@ -396,6 +416,7 @@ export async function acceptProviderBooking(providerUserId: string, bookingId: s
     PROVIDER_ACCEPT_TARGET,
     'BOOKING_ACCEPTED',
   );
+  await notifyReview(updated, 'ACCEPTED');
   const b: any = updated;
   return {
     id: b.id,
@@ -415,6 +436,7 @@ export async function rejectProviderBooking(providerUserId: string, bookingId: s
     PROVIDER_REJECT_TARGET,
     'BOOKING_DECLINED',
   );
+  await notifyReview(updated, 'DECLINED');
   const b: any = updated;
   return {
     id: b.id,

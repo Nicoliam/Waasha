@@ -388,6 +388,38 @@ export async function createPaymentIntent(input: {
     return { payment, idempotent: false };
   }, { isolationLevel: 'Serializable' } as any);
 
+  // Slice 7 — payment notifications. Only for fresh (non-idempotent) intents;
+  // retries return the existing payment without re-notifying. Never breaks
+  // payment creation.
+  try {
+    if (!(result as { idempotent?: boolean }).idempotent) {
+      const p = (result as { payment: Record<string, unknown> }).payment;
+      const paymentRef = {
+        id: String(p.id),
+        bookingId: String(p.bookingId),
+        method: String(p.method),
+        status: String(p.status),
+        amount: toNumber(p.amount),
+        currency: String(p.currency ?? 'ZAR'),
+      };
+      if (method === 'cash') {
+        const { notifyCashRecorded } = await import('../notifications/booking-notifications');
+        const tendered = input.cashDetails?.amountTendered != null ? Number(input.cashDetails.amountTendered) : null;
+        const changeRequested = !!input.cashDetails?.changeRequested;
+        let changeAmount: number | null = null;
+        if (changeRequested && tendered != null && Number.isFinite(tendered)) {
+          changeAmount = Math.round((tendered - paymentRef.amount) * 100) / 100;
+          if (changeAmount < 0) changeAmount = 0;
+        }
+        void notifyCashRecorded(paymentRef, { changeRequested, changeAmount }).catch(() => {});
+      } else if (method === 'eft') {
+        const { notifyEftPending } = await import('../notifications/booking-notifications');
+        void notifyEftPending(paymentRef).catch(() => {});
+      }
+      // waasha_payment: notify only when the webhook resolves PAID/FAILED below.
+    }
+  } catch {}
+
   return result;
 }
 
@@ -668,6 +700,34 @@ export async function processPaystackWebhook(input: {
     } catch {}
     return { event: ev, payment: updatedPayment } as const;
   });
+
+  // Slice 7 — notify both parties exactly once per resolved webhook outcome.
+  // Duplicates, already-in-status replays and unhandled events notify nothing.
+  try {
+    const settled = (result as any).payment as Record<string, unknown> | null;
+    const outcome = settled?.status === 'PAID' ? 'PAID' : settled?.status === 'FAILED' ? 'FAILED' : null;
+    const replayed =
+      (result as { duplicate?: boolean; alreadyInStatus?: boolean; unhandled?: boolean; invalidTransition?: boolean; amountMismatch?: boolean }).duplicate ||
+      (result as { alreadyInStatus?: boolean }).alreadyInStatus ||
+      (result as { unhandled?: boolean }).unhandled ||
+      (result as { invalidTransition?: boolean }).invalidTransition ||
+      (result as { amountMismatch?: boolean }).amountMismatch;
+    if (outcome && !replayed && settled) {
+      const { notifyPaymentResolved } = await import('../notifications/booking-notifications');
+      void notifyPaymentResolved(
+        {
+          id: String(settled.id),
+          bookingId: String(settled.bookingId),
+          method: String(settled.method),
+          status: String(settled.status),
+          amount: toNumber(settled.amount),
+          currency: String(settled.currency ?? 'ZAR'),
+        },
+        gatewayEventId,
+        outcome,
+      ).catch(() => {});
+    }
+  } catch {}
 
   return { duplicate: false, payment: (result as any).payment, event: (result as any).event } as const;
 }

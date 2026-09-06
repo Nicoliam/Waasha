@@ -46,6 +46,12 @@ export const routes: Routes = [
     loadComponent: () => import('./features/bookings/my-booking-detail.component').then((m) => m.MyBookingDetailComponent),
     canActivate: [authGuard],
   },
+  // Slice 7 — in-app notifications (auth required)
+  {
+    path: 'notifications',
+    loadComponent: () => import('./features/notifications/notifications.component').then((m) => m.NotificationsComponent),
+    canActivate: [authGuard],
+  },
   { path: 'auth/login', loadComponent: () => import('./features/auth/login.component').then((m) => m.LoginComponent) },
   { path: 'auth/register', loadComponent: () => import('./features/auth/register.component').then((m) => m.RegisterComponent) },
   { path: 'me', loadComponent: () => import('./features/auth/me.component').then((m) => m.MeComponent), canActivate: [authGuard] },

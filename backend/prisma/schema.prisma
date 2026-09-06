@@ -709,6 +709,48 @@ model AdminSetting {
   @@index([settingKey])
 }
 
+// ── Notifications (Slice 7 — provider-agnostic, IN_APP primary) ───────
+// Blueprint §39/§40. Domain emits intents; delivery adapters plug in later.
+// No vendor SDK is referenced here. No secrets or precise locations stored.
+
+model Notification {
+  id              String    @id @default(cuid())
+  recipientUserId String    @map("user_id")
+  audience        String    @default("CUSTOMER") // CUSTOMER | PROVIDER — deep-link routing only
+  type            String    // BOOKING_CREATED, NEW_BOOKING_REQUEST, BOOKING_ACCEPTED, ...
+  channel         String    @default("IN_APP") // IN_APP | PUSH | EMAIL | SMS | WHATSAPP
+  status          String    @default("UNREAD") // UNREAD | READ
+  title           String
+  message         String    @db.Text // plain text only — never rendered as HTML
+  entityType      String?   @map("entity_type")
+  entityId        String?   @map("entity_id")
+  eventKey        String?   @unique @map("event_key") // idempotency: booking:<id>:status:<S>, payment:<id>:<event>
+  metadata        Json?     @map("metadata")
+  readAt          DateTime? @map("read_at")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+
+  @@map("notifications")
+  @@index([recipientUserId, status, createdAt])
+  @@index([recipientUserId, createdAt])
+  @@index([eventKey])
+  @@index([entityType, entityId])
+}
+
+model NotificationPreference {
+  id               String   @id @default(cuid())
+  userId           String   @map("user_id")
+  channel          String   @default("IN_APP")
+  notificationType String   @map("notification_type") // BOOKING_UPDATES | PAYMENT_UPDATES | MARKETING
+  isEnabled        Boolean  @default(true) @map("is_enabled")
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+
+  @@unique([userId, channel, notificationType])
+  @@map("notification_preferences")
+  @@index([userId])
+}
+
 // ── Audit ───────────────────────────────────────────────────────
 
 model AuditLog {

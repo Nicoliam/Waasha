@@ -317,6 +317,22 @@ export async function createBooking(input: {
     include: { items: true, location: true, customer: { select: { id: true, userId: true } }, provider: { select: { id: true, displayName: true } } },
   } as any);
 
+  // Slice 7 — notify customer + provider. Fire-and-forget: failures must
+  // never break booking creation.
+  try {
+    const { notifyBookingCreated } = await import('../notifications/booking-notifications');
+    const b = (full ?? result.booking) as any;
+    void notifyBookingCreated({
+      id: b.id,
+      customerId: b.customerId,
+      providerId: b.providerId ?? null,
+      businessUnitId: b.businessUnitId ?? null,
+      scheduledStart: b.scheduledStart,
+      timezone: b.timezone ?? null,
+      items: (b.items ?? (full as any)?.items ?? []).map((i: any) => ({ serviceNameSnapshot: i.serviceNameSnapshot ?? null })),
+    }).catch(() => {});
+  } catch {}
+
   return full ?? result.booking;
 }
 
