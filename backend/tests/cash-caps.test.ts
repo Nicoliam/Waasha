@@ -19,6 +19,7 @@ const mockPaymentCreate = jest.fn();
 const mockAuditCreate = jest.fn();
 const mockCustomerProfileFindUnique = jest.fn();
 const mockUserFindUnique = jest.fn();
+const mockUserRoleFindMany = jest.fn();
 const mockBusinessFindFirst = jest.fn();
 const mockBusinessUnitFindUnique = jest.fn();
 const mockBusinessFindUnique = jest.fn();
@@ -68,6 +69,7 @@ jest.mock('../src/config/prisma', () => ({
     business: { findFirst: mockBusinessFindFirst, findUnique: mockBusinessFindUnique },
     businessUnit: { findUnique: mockBusinessUnitFindUnique },
     user: { findUnique: mockUserFindUnique },
+    userRole: { findMany: mockUserRoleFindMany },
     $transaction: mockTransaction,
     $queryRaw: mockQueryRaw,
     $executeRaw: mockExecuteRaw,
@@ -99,6 +101,11 @@ beforeEach(() => {
   mockUserFindUnique.mockImplementation(async ({ where }: any) => {
     if (where?.id) return { id: where.id, status: 'ACTIVE', uuid: where.id, email: `${where.id}@test.local` };
     return null;
+  });
+  // Slice 19 — legacy verify-student now uses DB-backed requireAdmin.
+  mockUserRoleFindMany.mockImplementation(async ({ where }: any) => {
+    if (where?.userId === 'user-admin') return [{ userId: 'user-admin', role: { code: 'ADMIN' } }];
+    return [];
   });
   mockAuditCreate.mockResolvedValue({});
   mockCustomerProfileFindUnique.mockResolvedValue({ id: 'cust-1', userId: 'user-cust' });

@@ -38,6 +38,14 @@ export class ProviderBookingsService {
     return this.http.post<{ success: boolean; data: any }>(`/api/v1/providers/me/bookings/${encodeURIComponent(id)}/reject`, {});
   }
 
+  /**
+   * Slice 13 — Mark an IN_PROGRESS booking COMPLETED.
+   * Empty body: the server derives provider ownership and eligibility.
+   */
+  complete(id: string): Observable<{ success: boolean; data: any }> {
+    return this.http.post<{ success: boolean; data: any }>(`/api/v1/providers/me/bookings/${encodeURIComponent(id)}/complete`, {});
+  }
+
   getNavigation(id: string): Observable<{ success: boolean; data: any }> {
     return this.http.get<{ success: boolean; data: any }>(
       `/api/v1/providers/me/bookings/${encodeURIComponent(id)}/navigation`,

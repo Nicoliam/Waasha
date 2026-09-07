@@ -10,16 +10,56 @@ const router = Router();
 router.use(authMiddleware);
 
 // GET /api/v1/providers/me — own provider profile (tenant isolation)
+// Ownership comes from the authenticated session userId only.
+// Returns the established API shape { success, data, error }.
 router.get('/me', async (req: Request, res: Response) => {
-  const authUser = req.authUser!;
-  const profile = await prisma.providerProfile.findUnique({
-    where: { userId: authUser.userId },
-    include: { tier: true },
-  });
-  if (!profile) {
-    return res.status(404).json({ success: false, error: { code: 'PROVIDER_NOT_FOUND', message: 'Provider profile not found' } });
+  try {
+    const svc = await import('./provider-profile.service');
+    const data = await svc.getOwnProfile(req.authUser!.userId);
+    return res.json({ success: true, data });
+  } catch (err: any) {
+    if (err && typeof err.status === 'number') {
+      return res.status(err.status).json({
+        success: false,
+        error: {
+          code: err.code ?? 'ERROR',
+          message: err.message,
+          ...(err.details !== undefined ? { details: err.details } : {}),
+        },
+      });
+    }
+    return res.status(500).json({ success: false, error: { code: 'INTERNAL_ERROR', message: 'Failed to load profile' } });
   }
-  return res.json({ success: true, data: profile });
+});
+
+// PATCH /api/v1/providers/me — Slice 10 provider profile management.
+// Editable allowlist: displayName, bio, experienceSummary,
+// customRequestsEnabled, profileImageUrl (reference-only).
+// MEDIA NOTE (deferred): profileImageUrl is a reference string only. The
+// existing media/storage abstraction remains the source of truth; no upload
+// endpoint, signed URL flow, S3 credentials, or vendor SDK are introduced
+// in this slice. Upload wiring is deferred until the media vertical slice.
+router.patch('/me', async (req: Request, res: Response) => {
+  try {
+    const svc = await import('./provider-profile.service');
+    const data = await svc.patchOwnProfile(req.authUser!.userId, (req.body ?? {}) as Record<string, unknown>, {
+      ip: req.ip,
+      userAgent: req.headers['user-agent'],
+    });
+    return res.json({ success: true, data });
+  } catch (err: any) {
+    if (err && typeof err.status === 'number') {
+      return res.status(err.status).json({
+        success: false,
+        error: {
+          code: err.code ?? 'ERROR',
+          message: err.message,
+          ...(err.details !== undefined ? { details: err.details } : {}),
+        },
+      });
+    }
+    return res.status(500).json({ success: false, error: { code: 'INTERNAL_ERROR', message: 'Failed to update profile' } });
+  }
 });
 
 // GET /api/v1/providers/me/coverage
@@ -199,6 +239,32 @@ router.post('/me/bookings/:id/reject', async (req: Request, res: Response) => ha
 // Blueprint-canonical alias: rejection records DECLINED.
 router.post('/me/bookings/:id/decline', async (req: Request, res: Response) => handleProviderBookingTransition(req, res, 'reject'));
 
+// ── Provider service completion — Phase 2 Slice 13 ──────────────────────────
+// IN_PROGRESS → COMPLETED only. The body carries no authority: any ownership,
+// status, price, payment or commission field is rejected (mass-assignment
+// safe). Provider identity always comes from the authenticated session.
+router.post('/me/bookings/:id/complete', async (req: Request, res: Response) => {
+  const authUser = req.authUser!;
+  const id = req.params.id as string;
+  if (!id) return res.status(422).json({ success: false, error: { code: 'VALIDATION_ERROR', message: 'Booking id required' } });
+  const bodySchema = z.object({}).strict();
+  const parsed = bodySchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    return res.status(422).json({ success: false, error: { code: 'VALIDATION_ERROR', message: 'Invalid body', details: parsed.error.flatten() } });
+  }
+  try {
+    const { completeProviderBooking } = await import('../bookings/booking-completion.service');
+    const result = await completeProviderBooking(authUser.userId, id, {
+      ip: req.ip,
+      userAgent: req.headers['user-agent'],
+    });
+    return res.json({ success: true, data: result });
+  } catch (err: any) {
+    if (err.status) return res.status(err.status).json({ success: false, error: { code: err.code ?? 'ERROR', message: err.message, details: err.details } });
+    return res.status(500).json({ success: false, error: { code: 'INTERNAL_ERROR', message: 'Failed to complete booking' } });
+  }
+});
+
 // ── Provider own services — Phase 2 Slice 1 (authenticated, ownership enforced) ────
 // GET /api/v1/providers/me/services — own services (all statuses), paginated, max 3 images
 router.get('/me/services', async (req: Request, res: Response) => {
@@ -345,6 +411,91 @@ router.get('/me/services/:serviceId', async (req: Request, res: Response) => {
     });
   } catch {
     return res.status(500).json({ success: false, error: { code: 'INTERNAL_ERROR', message: 'Failed to load service' } });
+  }
+});
+
+// ── Provider service catalogue management — Phase 2 Slice 9 ────────────────
+// Provider identity always comes from the authenticated session.
+// POST creates under the session provider; PUT/PATCH/DELETE are ownership-checked.
+// Price/duration edits never mutate existing bookings (historical snapshots).
+function serviceError(res: Response, err: any, fallback: string) {
+  if (err && typeof err.status === 'number') {
+    return res.status(err.status).json({
+      success: false,
+      error: { code: err.code ?? 'ERROR', message: err.message, ...(err.details !== undefined ? { details: err.details } : {}) },
+    });
+  }
+  return res.status(500).json({ success: false, error: { code: 'INTERNAL_ERROR', message: fallback } });
+}
+
+router.post('/me/services', async (req: Request, res: Response) => {
+  try {
+    const svc = await import('./provider-services.service');
+    const data = await svc.createService(req.authUser!.userId, (req.body ?? {}) as Record<string, unknown>, {
+      ip: req.ip,
+      userAgent: req.headers['user-agent'],
+    });
+    return res.status(201).json({ success: true, data });
+  } catch (err: any) {
+    return serviceError(res, err, 'Failed to create service');
+  }
+});
+
+router.put('/me/services/:serviceId', async (req: Request, res: Response) => {
+  try {
+    const svc = await import('./provider-services.service');
+    const data = await svc.replaceService(req.authUser!.userId, req.params.serviceId as string, (req.body ?? {}) as Record<string, unknown>, {
+      ip: req.ip,
+      userAgent: req.headers['user-agent'],
+    });
+    return res.json({ success: true, data });
+  } catch (err: any) {
+    return serviceError(res, err, 'Failed to update service');
+  }
+});
+
+router.patch('/me/services/:serviceId', async (req: Request, res: Response) => {
+  try {
+    const svc = await import('./provider-services.service');
+    const data = await svc.patchService(req.authUser!.userId, req.params.serviceId as string, (req.body ?? {}) as Record<string, unknown>, {
+      ip: req.ip,
+      userAgent: req.headers['user-agent'],
+    });
+    return res.json({ success: true, data });
+  } catch (err: any) {
+    return serviceError(res, err, 'Failed to update service');
+  }
+});
+
+router.delete('/me/services/:serviceId/images/:imageId', async (req: Request, res: Response) => {
+  try {
+    const svc = await import('../media/media.service');
+    const data = await svc.removeServiceImage(
+      req.authUser!.userId,
+      req.params.serviceId as string,
+      req.params.imageId as string,
+      {
+        ip: req.ip,
+        userAgent: req.headers['user-agent'],
+        roles: Array.isArray((req.authUser as any)?.roles) ? (req.authUser as any).roles as string[] : [],
+      },
+    );
+    return res.json({ success: true, data });
+  } catch (err: any) {
+    return serviceError(res, err, 'Failed to remove service image');
+  }
+});
+
+router.delete('/me/services/:serviceId', async (req: Request, res: Response) => {
+  try {
+    const svc = await import('./provider-services.service');
+    const data = await svc.deleteService(req.authUser!.userId, req.params.serviceId as string, {
+      ip: req.ip,
+      userAgent: req.headers['user-agent'],
+    });
+    return res.json({ success: true, data });
+  } catch (err: any) {
+    return serviceError(res, err, 'Failed to delete service');
   }
 });
 

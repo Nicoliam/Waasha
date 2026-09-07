@@ -3,6 +3,7 @@ import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { RouterLink } from '@angular/router';
 import { NotificationService } from '../../core/services/notification.service';
+import { SyncService } from '../../core/sync/sync.service';
 import {
   NotificationItem,
   isUnread,
@@ -28,6 +29,7 @@ import {
           {{ markingAll ? 'Marking…' : 'Mark all read' }}
         </button>
       </header>
+      <p *ngIf="pendingSyncNote" class="wa-card wa-loading" role="status">{{ pendingSyncNote }}</p>
 
       <section *ngIf="loading" class="wa-card wa-loading" role="status">Loading notifications…</section>
 
@@ -139,6 +141,9 @@ import {
 })
 export class NotificationsComponent implements OnInit {
   private readonly notifications = inject(NotificationService);
+  private readonly sync = inject(SyncService);
+  /** Slice 18 — queued read-state note (reconciles server-wins on reconnect). */
+  pendingSyncNote: string | null = null;
 
   items: NotificationItem[] = [];
   loading = true;
@@ -211,6 +216,22 @@ export class NotificationsComponent implements OnInit {
     if (this.markingId) return;
     this.markingId = n.id;
     this.rowError = null;
+    // Slice 18 — offline: queue the idempotent flag write and reflect it
+    // locally with an explicit will-sync note. Server state wins on refresh.
+    if (!this.sync.onlineNow) {
+      this.sync
+        .enqueueAs('notifications.mark-read', { notificationId: n.id })
+        .then(() => {
+          this.markingId = null;
+          this.items = applyMarkRead(this.items, n.id);
+          this.pendingSyncNote = 'Saved — read state will sync when you reconnect.';
+        })
+        .catch(() => {
+          this.markingId = null;
+          this.rowError = n.id;
+        });
+      return;
+    }
     // Optimistic state is applied ONLY on server confirmation below.
     this.notifications.markRead(n.id).subscribe({
       next: () => {
@@ -227,6 +248,20 @@ export class NotificationsComponent implements OnInit {
   markAllRead(): void {
     if (this.markingAll) return;
     this.markingAll = true;
+    if (!this.sync.onlineNow) {
+      this.sync
+        .enqueueAs('notifications.read-all', {})
+        .then(() => {
+          this.markingAll = false;
+          this.items = applyMarkAllRead(this.items);
+          this.pendingSyncNote = 'Saved — read state will sync when you reconnect.';
+        })
+        .catch(() => {
+          this.markingAll = false;
+          this.loadError = 'Failed to save read state. Please try again when online.';
+        });
+      return;
+    }
     this.notifications.markAllRead().subscribe({
       next: () => {
         this.markingAll = false;

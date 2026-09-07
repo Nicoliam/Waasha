@@ -2,7 +2,7 @@ import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import { prisma } from '../../config/prisma';
 import { authMiddleware } from '../../middleware/auth';
-import { requireRole } from '../../middleware/authorize';
+import { requireAdmin } from '../admin/admin-auth';
 import { getCommissionRates, getCommissionRateForProvider } from './commission.service';
 import { getCashCaps, getCashCapForProvider } from './cash-caps.service';
 import { createCashBooking, settleCashLiability, getCashAccount, CashCapExceededError, CashNotAcceptedError } from './cash-ledger.service';
@@ -190,35 +190,33 @@ router.put('/student-request', async (req: Request, res: Response) => {
   return res.json({ success: true, data: { studentVerificationStatus: updated.studentVerificationStatus } });
 });
 
-// Admin — verify student (must be ADMIN)
-router.post('/admin/verify-student/:providerId', requireRole('ADMIN'), async (req: Request, res: Response) => {
+// Admin — verify student (Slice 19: legacy compatibility path).
+// Authorization is DB-backed via requireAdmin (session user → user_roles →
+// roles). JWT role claims are NEVER sufficient. The write itself delegates
+// to the canonical admin.service.setStudentVerification — there is exactly
+// one authoritative verification implementation, one audit path, and one
+// (centralized, exactly-once) notification hook. APPROVE/REJECT preserved
+// for compatibility; REVOKE accepted for parity with the canonical route.
+router.post('/admin/verify-student/:providerId', requireAdmin, async (req: Request, res: Response) => {
   const providerId = req.params.providerId;
-  const { action } = req.body as { action?: 'APPROVE' | 'REJECT' };
-  if (!['APPROVE', 'REJECT'].includes(action ?? '')) {
-    return res.status(422).json({ success: false, error: { code: 'VALIDATION_ERROR', message: 'action must be APPROVE or REJECT' } });
+  const { action } = req.body as { action?: 'APPROVE' | 'REJECT' | 'REVOKE' };
+  if (!['APPROVE', 'REJECT', 'REVOKE'].includes(action ?? '')) {
+    return res.status(422).json({ success: false, error: { code: 'VALIDATION_ERROR', message: 'action must be APPROVE, REJECT or REVOKE' } });
   }
-  const provider = await prisma.providerProfile.findUnique({ where: { id: providerId } });
-  if (!provider) return res.status(404).json({ success: false, error: { code: 'PROVIDER_NOT_FOUND', message: 'Provider not found' } });
-  const isStudent = action === 'APPROVE';
-  const status = action === 'APPROVE' ? 'VERIFIED' : 'REJECTED';
-  const updated = await prisma.providerProfile.update({
-    where: { id: providerId },
-    data: { isStudent, studentVerificationStatus: status as any },
-  });
   try {
-    await prisma.auditLog.create({
-      data: {
-        actorUserId: req.authUser!.userId,
-        action: `STUDENT_VERIFICATION_${action}`,
-        entityType: 'provider_profile',
-        entityId: providerId,
-        afterJson: { isStudent, studentVerificationStatus: status } as any,
-        ipAddress: req.ip,
-        userAgent: req.headers['user-agent'],
-      },
+    const { setStudentVerification } = await import('../admin/admin.service');
+    const result = await setStudentVerification(providerId, action as 'APPROVE' | 'REJECT' | 'REVOKE', null, {
+      actorUserId: req.authUser!.userId,
+      ip: req.ip,
+      userAgent: req.headers['user-agent'] as string | undefined,
     });
-  } catch {}
-  return res.json({ success: true, data: { isStudent: updated.isStudent, studentVerificationStatus: updated.studentVerificationStatus } });
+    return res.json({ success: true, data: { isStudent: result.isStudent, studentVerificationStatus: result.studentVerificationStatus } });
+  } catch (err: any) {
+    if (err && typeof err.status === 'number') {
+      return res.status(err.status).json({ success: false, error: { code: err.code ?? 'ERROR', message: err.message } });
+    }
+    return res.status(500).json({ success: false, error: { code: 'INTERNAL_ERROR', message: 'Failed to verify student' } });
+  }
 });
 
 export default router;

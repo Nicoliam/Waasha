@@ -140,7 +140,9 @@ Historical records are immutable — never `update` a `CashLedgerEntry` or `Paym
 - Student `commission 16%` and `cap 500` only apply when `isStudent=true && studentVerificationStatus=VERIFIED`.
 - Eligibility requires verification:
   - Provider `PUT /api/v1/finance/student-request` → sets `studentVerificationStatus: PENDING` (not `VERIFIED`).
-  - Admin `POST /api/v1/finance/admin/verify-student/:providerId` with `action: APPROVE|REJECT` and `requireRole('ADMIN')` → sets `isStudent` + `studentVerificationStatus`.
+  - Canonical admin verification is `POST /api/v1/admin/providers/:id/student-verification` (`action: APPROVE|REJECT|REVOKE`) via `admin.service.setStudentVerification` — the SINGLE authoritative implementation (DB-backed `requireAdmin`: session identifies the user, `user_roles → roles` decides authority; JWT role claims are never sufficient).
+  - Legacy compatibility path `POST /api/v1/finance/admin/verify-student/:providerId` (Slice 19: `requireAdmin`, delegates to the same canonical service; accepts `APPROVE|REJECT|REVOKE`) → sets `isStudent` + `studentVerificationStatus`. No independent authorization or verification logic remains.
+  - Both paths fire the centralized training-centre outcome hook (`notifyStudentVerificationOutcome`) exactly once post-commit (best-effort; never breaks the write).
   - Self-selecting `STUDENT` via `POST /api/v1/auth/register/provider` with `tierCode: STUDENT` is **not** allowed — `registerProvider` only allows `T1/T2/T3`; `STUDENT` tier is not selectable at registration, only via admin verification. Do not allow `isStudent` to be set via client `register` payload (allowlisted fields only).
 - Student status **must not** affect marketplace ranking or discovery priority (same equality rule as T1/T2/T3 and training-centre).
 - **Future enhancement (not Phase 1.5):** `ProviderProfile` currently lacks `studentInstitution`, `studentIdNumber`, `studentEvidenceUrl`, `studentExpiry` — document as future fields for full student verification with institution/evidence metadata and expiry. Phase 1.5 uses `isStudent` + `studentVerificationStatus` with `auditLog` only.
@@ -156,7 +158,7 @@ Historical records are immutable — never `update` a `CashLedgerEntry` or `Paym
 - `POST /api/v1/finance/settlements` — provider `body {amount, idempotencyKey?}` → reduces `outstanding`, `idempotent` on duplicate key.
 - `PUT /api/v1/finance/cash-acceptance` — provider `body {acceptCash: boolean}` (audited, T1/T2; T3 unit vs business per §1).
 - `PUT /api/v1/finance/student-request` — provider requests `PENDING` (not `VERIFIED`), audited.
-- `POST /api/v1/finance/admin/verify-student/:providerId` — `ADMIN` only, `body {action: APPROVE|REJECT}` → `VERIFIED/REJECTED`, audited, no ranking boost.
+- `POST /api/v1/finance/admin/verify-student/:providerId` — legacy compatibility path, DB-verified `ADMIN` only (`requireAdmin`), `body {action: APPROVE|REJECT|REVOKE}` → delegates to canonical `admin.service.setStudentVerification` → `VERIFIED/REJECTED/UNVERIFIED`, audited, exactly-once outcome notification, no ranking boost.
 
 ---
 

@@ -184,6 +184,117 @@ export async function notifyBookingReviewed(
   }
 }
 
+/** Customer-initiated cancellation → customer confirmation + provider notice. */
+export async function notifyBookingCancelled(booking: BookingRef): Promise<void> {
+  const service = serviceNameOf(booking);
+  const when = whenOf(booking);
+  const [custUserId, provUserId, provName, custName] = await Promise.all([
+    customerUserId(booking.customerId),
+    providerUserId(booking.providerId, booking.businessUnitId),
+    providerDisplayName(booking.providerId),
+    customerDisplayName(booking.customerId),
+  ]);
+  if (custUserId) {
+    await safeEmit({
+      recipientUserId: custUserId,
+      audience: 'CUSTOMER',
+      type: 'BOOKING_CANCELLED',
+      title: 'Booking cancelled',
+      message: `Your booking for ${service} with ${provName} (${when}) was cancelled. No refund was processed automatically; payment status is unchanged.`,
+      entityType: 'booking',
+      entityId: booking.id,
+      eventKey: `booking:${booking.id}:cancelled:customer`,
+    });
+  }
+  if (provUserId) {
+    await safeEmit({
+      recipientUserId: provUserId,
+      audience: 'PROVIDER',
+      type: 'BOOKING_CANCELLED',
+      title: 'Booking cancelled by customer',
+      message: `${custName} cancelled the booking for ${service} (${when}).`,
+      entityType: 'booking',
+      entityId: booking.id,
+      eventKey: `booking:${booking.id}:cancelled:provider`,
+    });
+  }
+}
+
+/** Customer rescheduling → customer confirmation + provider notice. */
+export async function notifyBookingRescheduled(booking: BookingRef): Promise<void> {
+  const service = serviceNameOf(booking);
+  const when = whenOf(booking);
+  const [custUserId, provUserId, provName, custName] = await Promise.all([
+    customerUserId(booking.customerId),
+    providerUserId(booking.providerId, booking.businessUnitId),
+    providerDisplayName(booking.providerId),
+    customerDisplayName(booking.customerId),
+  ]);
+  const startMs =
+    booking.scheduledStart instanceof Date ? booking.scheduledStart.getTime() : new Date(booking.scheduledStart).getTime();
+  const slotKey = Number.isFinite(startMs) ? String(startMs) : 'unknown';
+  if (custUserId) {
+    await safeEmit({
+      recipientUserId: custUserId,
+      audience: 'CUSTOMER',
+      type: 'BOOKING_RESCHEDULED',
+      title: 'Booking rescheduled',
+      message: `Your booking for ${service} with ${provName} moved to ${when}.`,
+      entityType: 'booking',
+      entityId: booking.id,
+      eventKey: `booking:${booking.id}:rescheduled:${slotKey}:customer`,
+    });
+  }
+  if (provUserId) {
+    await safeEmit({
+      recipientUserId: provUserId,
+      audience: 'PROVIDER',
+      type: 'BOOKING_RESCHEDULED',
+      title: 'Booking rescheduled by customer',
+      message: `${custName} moved the booking for ${service} to ${when}.`,
+      entityType: 'booking',
+      entityId: booking.id,
+      eventKey: `booking:${booking.id}:rescheduled:${slotKey}:provider`,
+    });
+  }
+}
+
+/** Provider IN_PROGRESS → COMPLETED → customer notification. */
+export async function notifyBookingCompleted(booking: BookingRef): Promise<void> {
+  const custUserId = await customerUserId(booking.customerId);
+  if (!custUserId) return;
+  const service = serviceNameOf(booking);
+  const provName = await providerDisplayName(booking.providerId);
+  await safeEmit({
+    recipientUserId: custUserId,
+    audience: 'CUSTOMER',
+    type: 'BOOKING_COMPLETED',
+    title: 'Service completed',
+    message: `${provName} marked your service for ${service} as complete. You can now leave a review.`,
+    entityType: 'booking',
+    entityId: booking.id,
+    eventKey: `booking:${booking.id}:status:COMPLETED`,
+  });
+}
+
+/** Customer review submitted → provider notification. */
+export async function notifyReviewSubmitted(booking: BookingRef, rating: number): Promise<void> {
+  const provUserId = await providerUserId(booking.providerId, booking.businessUnitId);
+  if (!provUserId) return;
+  const service = serviceNameOf(booking);
+  const custName = await customerDisplayName(booking.customerId);
+  await safeEmit({
+    recipientUserId: provUserId,
+    audience: 'PROVIDER',
+    type: 'REVIEW_SUBMITTED',
+    title: 'New review received',
+    message: `${custName} left a ${rating}-star review for ${service}.`,
+    entityType: 'booking',
+    entityId: booking.id,
+    eventKey: `booking:${booking.id}:review-submitted`,
+  });
+}
+
 export interface PaymentRef {
   id: string;
   bookingId: string;

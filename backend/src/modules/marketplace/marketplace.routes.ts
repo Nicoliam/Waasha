@@ -147,9 +147,138 @@ router.get('/providers', async (req: Request, res: Response) => {
   // Sort by distance ascending (marketplace equality — no tier boost)
   preFiltered.sort((a, b) => a.distanceKm - b.distanceKm);
 
-  const total = preFiltered.length;
+  // Slice 15 — T3 business-unit discovery (BusinessLocation indexing).
+  // Units with their own coordinates participate under the SAME BOTH rule:
+  // distance <= customer radius AND distance <= unit coverage AND <= max 20.
+  // No tier boost: unit entries interleave purely by distance. Provider-level
+  // entries above are untouched; when no BusinessLocation rows exist the
+  // result is byte-identical to previous slices.
+  type UnitHit = { unit: any; ownerProvider: any; distanceKm: number };
+  const unitHits: UnitHit[] = [];
+  try {
+    const unitLocations = await (prisma as any).businessLocation?.findMany?.({
+      where: {
+        latitude: { gte: box.minLat, lte: box.maxLat },
+        longitude: { gte: box.minLng, lte: box.maxLng },
+      },
+      include: {
+        businessUnit: {
+          include: {
+            business: true,
+          },
+        },
+      },
+      take: 500,
+    });
+    if (Array.isArray(unitLocations)) {
+      for (const loc of unitLocations as any[]) {
+        const unit = loc.businessUnit;
+        if (!unit || unit.status !== 'ACTIVE' || unit.deletedAt) continue;
+        const business = unit.business;
+        if (!business || business.status !== 'ACTIVE' || business.deletedAt) continue;
+        const distanceKm = haversineKm({ latitude, longitude }, { latitude: loc.latitude, longitude: loc.longitude });
+        if (distanceKm > config.max_discovery_radius_km) continue;
+        if (distanceKm > radiusKm) continue;
+        const unitCoverage = Number(unit.coverageRadiusKm ?? 10);
+        if (distanceKm > unitCoverage) continue; // unit coverage — BOTH rule
+        if (resolvedCategoryId) {
+          let hasCategory = false;
+          try {
+            const link = await (prisma as any).businessUnitCategory?.findFirst?.({
+              where: { businessUnitId: unit.id, serviceCategoryId: resolvedCategoryId },
+              select: { businessUnitId: true },
+            });
+            if (link) hasCategory = true;
+            else {
+              const svc = await prisma.service.findFirst({
+                where: { businessUnitId: unit.id, serviceCategoryId: resolvedCategoryId, status: 'ACTIVE' },
+                select: { id: true },
+              });
+              if (svc) hasCategory = true;
+            }
+          } catch {
+            hasCategory = false;
+          }
+          if (!hasCategory) continue;
+        }
+        // Owner provider must be ACTIVE (marketplace equality: same bar as T1).
+        let ownerProvider: any = null;
+        try {
+          ownerProvider = await prisma.providerProfile.findFirst({
+            where: { userId: business.ownerProviderId, status: 'ACTIVE' },
+            select: {
+              id: true,
+              displayName: true,
+              bio: true,
+              profileImageUrl: true,
+              verificationStatus: true,
+              tier: { select: { code: true, name: true } },
+            },
+          });
+        } catch {
+          ownerProvider = null;
+        }
+        if (!ownerProvider) continue;
+        unitHits.push({ unit: { ...unit, location: loc }, ownerProvider, distanceKm: Math.round(distanceKm * 10) / 10 });
+      }
+    }
+  } catch {
+    /* BusinessLocation infra unavailable — provider-only discovery */
+  }
+  unitHits.sort((a, b) => a.distanceKm - b.distanceKm);
+
+  // Merge provider + unit entries by distance (no tier boost anywhere).
+  const merged: Array<{ kind: 'provider'; loc: (typeof locations)[number]; distanceKm: number } | { kind: 'business_unit'; hit: UnitHit }> = [
+    ...preFiltered.map((p) => ({ kind: 'provider' as const, loc: p.loc, distanceKm: p.distanceKm })),
+    ...unitHits.map((hit) => ({ kind: 'business_unit' as const, hit })),
+  ];
+  merged.sort((a, b) => (a.kind === 'provider' ? a.distanceKm : a.hit.distanceKm) - (b.kind === 'provider' ? b.distanceKm : b.hit.distanceKm));
+
+  const total = merged.length;
   const start = (page - 1) * perPage;
-  const pagedFiltered = preFiltered.slice(start, start + perPage);
+  const pagedMerged = merged.slice(start, start + perPage);
+  const pagedFiltered = pagedMerged.filter((m) => m.kind === 'provider') as Array<{ loc: (typeof locations)[number]; distanceKm: number }>;
+  const pagedUnits = pagedMerged.filter((m) => m.kind === 'business_unit') as Array<{ hit: UnitHit }>;
+
+  // Enrich unit entries (starting price from unit services, unit categories).
+  const unitEnrich = new Map<string, { startingPrice: number | null; categories: string[] }>();
+  if (pagedUnits.length > 0) {
+    try {
+      const unitIds = pagedUnits.map((u) => u.hit.unit.id);
+      const unitServices = await prisma.service.findMany({
+        where: { businessUnitId: { in: unitIds }, status: 'ACTIVE' },
+        select: { businessUnitId: true, price: true, category: { select: { name: true } } },
+      });
+      const byUnit = new Map<string, typeof unitServices>();
+      for (const s of unitServices) {
+        const arr = byUnit.get(s.businessUnitId!) ?? [];
+        arr.push(s);
+        byUnit.set(s.businessUnitId!, arr);
+      }
+      const unitCats = await (prisma as any).businessUnitCategory?.findMany?.({
+        where: { businessUnitId: { in: unitIds } },
+        include: { category: { select: { name: true } } },
+      });
+      const catsByUnit = new Map<string, string[]>();
+      for (const c of (unitCats as any[]) ?? []) {
+        const arr = catsByUnit.get(c.businessUnitId) ?? [];
+        if (c.category?.name) arr.push(c.category.name);
+        catsByUnit.set(c.businessUnitId, arr);
+      }
+      for (const id of unitIds) {
+        const svc = byUnit.get(id) ?? [];
+        const prices = svc.map((s: any) => Number(s.price)).filter((n: number) => Number.isFinite(n));
+        const fromServices = [...new Set(svc.map((s: any) => s.category?.name).filter(Boolean))] as string[];
+        const fromLinks = catsByUnit.get(id) ?? [];
+        unitEnrich.set(id, {
+          startingPrice: prices.length ? Math.min(...prices) : null,
+          categories: [...new Set([...fromServices, ...fromLinks])],
+        });
+      }
+    } catch {
+      /* unit enrichment is best-effort */
+    }
+  }
 
   // Enrich paged results with marketplace card fields (tier, rating, startingPrice, categories, location city)
   const providerIds = pagedFiltered.map((r) => r.loc.provider.id);
@@ -204,9 +333,40 @@ router.get('/providers', async (req: Request, res: Response) => {
     }
   }
 
-  const paged = pagedFiltered.map(({ loc, distanceKm }) => {
+  const paged = pagedMerged.map((entry) => {
+    if (entry.kind === 'business_unit') {
+      const { hit } = entry as { hit: UnitHit };
+      const op = hit.ownerProvider;
+      const ue = unitEnrich.get(hit.unit.id);
+      const loc = hit.unit.location;
+      return {
+        kind: 'business_unit' as const,
+        id: op.id,
+        businessId: hit.unit.businessId,
+        businessUnitId: hit.unit.id,
+        unitName: hit.unit.name,
+        displayName: hit.unit.name ?? op.displayName ?? 'Provider',
+        bio: op.bio ?? null,
+        profileImageUrl: op.profileImageUrl ?? null,
+        tierCode: op.tier?.code ?? 'T3',
+        tierName: op.tier?.name ?? 'Business',
+        verificationStatus: op.verificationStatus ?? null,
+        latitude: loc.latitude,
+        longitude: loc.longitude,
+        city: loc.city ?? null,
+        province: loc.province ?? null,
+        coverageRadiusKm: Number(hit.unit.coverageRadiusKm ?? 10),
+        distanceKm: hit.distanceKm,
+        rating: null,
+        reviewCount: 0,
+        startingPrice: ue?.startingPrice ?? null,
+        categories: ue?.categories ?? [],
+      };
+    }
+    const { loc, distanceKm } = entry as { loc: (typeof locations)[number]; distanceKm: number };
     const e = enrichedMap.get(loc.provider.id);
     return {
+      kind: 'provider' as const,
       id: loc.provider.id,
       displayName: loc.provider.displayName ?? 'Provider',
       bio: loc.provider.bio ?? null,

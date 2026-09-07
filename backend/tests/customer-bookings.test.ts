@@ -369,8 +369,14 @@ describe('Slice 6 — no customer-driven transitions (cancellation deferred)', (
     expect(store['cb-pending'].status).toBe('PENDING');
   });
 
-  it('15. unsupported lifecycle transitions rejected — no customer status/cancel endpoints', async () => {
-    for (const method of ['post', 'put', 'patch'] as const) {
+  it('15. unsupported lifecycle transitions rejected — no customer status forcing (Slice 12 owns POST cancel/reschedule)', async () => {
+    // Slice 12 intentionally introduces POST /cancel and POST/PATCH
+    // /reschedule as the only customer transitions; their behaviour is
+    // covered in customer-booking-actions.test.ts. Anything else that
+    // would let the client force status must still not exist.
+    const put = await request(app).post('/api/v1/customers/me/bookings/cb-pending/cancel').set('Authorization', `Bearer ${cust1()}`).send({ status: 'COMPLETED' });
+    expect(put.status).toBe(422); // strict schema: status can never be client-controlled
+    for (const method of ['put'] as const) {
       const r = await (request(app) as unknown as Record<string, (url: string) => request.Test>)[method](
         '/api/v1/customers/me/bookings/cb-pending/cancel',
       ).set('Authorization', `Bearer ${cust1()}`);

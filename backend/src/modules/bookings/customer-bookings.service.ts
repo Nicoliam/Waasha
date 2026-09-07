@@ -72,6 +72,9 @@ export interface CustomerBookingSummaryDto {
 
 export interface CustomerBookingDetailDto extends CustomerBookingSummaryDto {
   items: CustomerBookingItemDto[];
+  /** Own booking's provider/service ids — needed for availability lookups; never another party's ids. */
+  providerId: string | null;
+  serviceId: string | null;
   location: CustomerBookingLocationDto | null;
   locationAuthorized: boolean;
   payment: CustomerBookingPaymentDto | null;
@@ -321,6 +324,11 @@ export async function getCustomerBookingDetail(
       rawLocation,
     ),
     items,
+    providerId: (booking.providerId as string | null) ?? null,
+    serviceId:
+      (booking.serviceId as string | null) ??
+      (items.length > 0 ? (items[0].serviceId as string | null) : null) ??
+      null,
     location,
     locationAuthorized: authorized,
     // No provider navigation is exposed through the customer endpoint.

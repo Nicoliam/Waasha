@@ -99,3 +99,93 @@ export function locationSummaryText(locationSummary: string | null, authorized: 
   if (authorized) return locationSummary ?? '—';
   return locationSummary ? `${locationSummary} (exact address available once accepted)` : 'Location protected until accepted';
 }
+
+/**
+ * Slice 12 — Client-side eligibility hints for customer booking actions.
+ * These mirror the server's cancellable/reschedulable states for display
+ * only. The server remains authoritative: actions are shown only as hints
+ * and every mutation result comes from the backend.
+ */
+export const CUSTOMER_CANCELLABLE_STATUSES = ['PENDING', 'ACCEPTED', 'CONFIRMED', 'PAYMENT_PENDING', 'PAID'];
+
+export const CUSTOMER_RESCHEDULABLE_STATUSES = ['PENDING', 'ACCEPTED', 'CONFIRMED', 'PAYMENT_PENDING', 'PAID'];
+
+/** Display hint only — the server decides. Hides actions for terminal/passed bookings. */
+export function canCancelBooking(status: string): boolean {
+  return CUSTOMER_CANCELLABLE_STATUSES.includes((status ?? '').toUpperCase());
+}
+
+/** Display hint only — the server decides. */
+export function canRescheduleBooking(status: string): boolean {
+  return CUSTOMER_RESCHEDULABLE_STATUSES.includes((status ?? '').toUpperCase());
+}
+
+/**
+ * Slice 13 — Client-side review hint. Only COMPLETED bookings expose
+ * "Leave a Review". Display only — the server derives eligibility and
+ * rejects reviews for pending/accepted/declined/cancelled bookings.
+ */
+export function canReviewBooking(status: string): boolean {
+  return (status ?? '').toUpperCase() === 'COMPLETED';
+}
+
+/** Allowed star ratings (1–5). The server validates; this is display only. */
+export const REVIEW_RATINGS = [1, 2, 3, 4, 5];
+
+/** Client-side rating check for immediate feedback; the server re-validates. */
+export function isValidRating(rating: unknown): boolean {
+  return typeof rating === 'number' && Number.isInteger(rating) && rating >= 1 && rating <= 5;
+}
+
+export type CustomerBookingActionError =
+  | 'unauthorized'
+  | 'not-found'
+  | 'invalid-state'
+  | 'window-closed'
+  | 'conflict'
+  | 'validation'
+  | 'offline'
+  | 'server';
+
+/** Maps server error codes/status to UI-safe messages (never leaks internals). */
+export function interpretActionError(err: any): { kind: CustomerBookingActionError; message: string } {
+  const status = err?.status;
+  const code = err?.error?.error?.code ?? err?.error?.code;
+  if (status === 0 || err?.message === 'OFFLINE') {
+    return { kind: 'offline', message: 'You appear to be offline. This action needs a connection — nothing was changed. Please reconnect and retry.' };
+  }
+  if (status === 401 || status === 403) {
+    return { kind: 'unauthorized', message: 'Please log in to manage your booking.' };
+  }
+  if (status === 404) {
+    return { kind: 'not-found', message: 'This booking does not exist or does not belong to your account.' };
+  }
+  if (code === 'REVIEW_ALREADY_EXISTS') {
+    return { kind: 'conflict', message: 'You have already reviewed this booking. Each completed service can be reviewed once.' };
+  }
+  if (code === 'REVIEW_NOT_ELIGIBLE') {
+    return { kind: 'invalid-state', message: 'Only completed services can be reviewed.' };
+  }
+  if (status === 409 || code === 'SLOT_UNAVAILABLE' || code === 'BOOKING_CONFLICT') {
+    return { kind: 'conflict', message: 'That time just became unavailable. Please choose another slot.' };
+  }
+  if (code === 'BOOKING_INVALID_STATE') {
+    return { kind: 'invalid-state', message: 'This booking can no longer be changed in its current state.' };
+  }
+  if (code === 'BOOKING_CANCELLATION_WINDOW_CLOSED' || code === 'BOOKING_RESCHEDULE_WINDOW_CLOSED') {
+    return { kind: 'window-closed', message: 'The change window for this booking has closed.' };
+  }
+  if (status === 422) {
+    return { kind: 'validation', message: 'Please check your input and try again.' };
+  }
+  return { kind: 'server', message: 'Something went wrong. Nothing was changed — please try again.' };
+}
+
+/** Offline guard — mutations must never be queued as if confirmed. */
+export function isOnline(): boolean {
+  try {
+    return typeof navigator === 'undefined' ? true : navigator.onLine !== false;
+  } catch {
+    return true;
+  }
+}

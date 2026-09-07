@@ -92,3 +92,21 @@ export function cashChangeText(changeRequested: boolean, changeAmount: number | 
   if (changeAmount == null) return 'Cash change requested — customer asked for change.';
   return `Cash change requested — customer asked for R${changeAmount} change.`;
 }
+
+/**
+ * Slice 13 — Client-side completion hint. Only IN_PROGRESS bookings expose
+ * "Mark Service Complete". Display only — the server remains authoritative
+ * and rejects PENDING/ACCEPTED/DECLINED/CANCELLED completions.
+ */
+export function canCompleteBooking(status: string): boolean {
+  return (status ?? '').toUpperCase() === 'IN_PROGRESS';
+}
+
+/** Offline guard — completion must never be queued as if confirmed. */
+export function isOnline(): boolean {
+  try {
+    return typeof navigator === 'undefined' ? true : navigator.onLine !== false;
+  } catch {
+    return true;
+  }
+}

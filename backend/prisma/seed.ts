@@ -145,6 +145,22 @@ async function main() {
       valueType: 'NUMBER',
       description: 'Maximum outstanding Waasha commission owed from cash transactions — T3 Business (ZAR)',
     },
+    // Slice 17 — Training-centre partner share default (% of the platform
+    // commission allocated to the attributed partner on eligible completed
+    // services). Overridden by active partner_share_rules rows. Accruals
+    // are ledger records, not payouts.
+    {
+      settingKey: 'partner_share_default_percent',
+      settingValue: '10',
+      valueType: 'NUMBER',
+      description: 'Default % of platform commission allocated to the attributed training-centre partner (configurable)',
+    },
+    {
+      settingKey: 'training_referral_ttl_days',
+      settingValue: '30',
+      valueType: 'NUMBER',
+      description: 'Default training-centre referral invitation validity in days (configurable)',
+    },
   ];
 
   for (const s of settings) {

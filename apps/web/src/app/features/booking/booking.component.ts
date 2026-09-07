@@ -4,6 +4,7 @@ import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { MarketplaceService } from '../../core/services/marketplace.service';
 import { BookingService } from '../../core/services/booking.service';
+import { SyncService } from '../../core/sync/sync.service';
 import { CustomerLocationService } from '../../core/services/customer-location.service';
 import { PaymentService, PaymentMethod } from '../../core/services/payment.service';
 import { ServiceDto, ProviderProfileDto } from '../../core/models/discovery-radius.model';
@@ -285,6 +286,7 @@ export class BookingComponent implements OnInit {
   private readonly router = inject(Router);
   private readonly marketplace = inject(MarketplaceService);
   private readonly bookingService = inject(BookingService);
+  private readonly sync = inject(SyncService);
   private readonly locationService = inject(CustomerLocationService);
   private readonly paymentService = inject(PaymentService);
 
@@ -446,6 +448,18 @@ export class BookingComponent implements OnInit {
     this.createError = false;
     this.createConflict = false;
     this.unauthorizedError = false;
+
+    // Slice 18 — standard booking creation is intentionally online-only (no
+    // server idempotency key; retry could duplicate bookings). Prepare the
+    // request offline, confirm online. Nothing is queued or faked.
+    if (!this.sync.onlineNow) {
+      this.creating = false;
+      this.createError = true;
+      this.createErrorTitle = 'You are offline';
+      this.createErrorMsg =
+        'Booking needs a live connection so availability can be confirmed — nothing was booked. Your selection is kept; reconnect and confirm.';
+      return;
+    }
 
     const payload: any = {
       providerId: this.providerId,

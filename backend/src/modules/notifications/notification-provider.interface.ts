@@ -15,10 +15,24 @@ export type NotificationType =
   | 'NEW_BOOKING_REQUEST'
   | 'BOOKING_ACCEPTED'
   | 'BOOKING_DECLINED'
+  | 'BOOKING_CANCELLED'
+  | 'BOOKING_RESCHEDULED'
+  | 'BOOKING_COMPLETED'
+  | 'REVIEW_SUBMITTED'
   | 'PAYMENT_PAID'
   | 'PAYMENT_FAILED'
   | 'PAYMENT_EFT_PENDING'
-  | 'CASH_RECORDED';
+  | 'CASH_RECORDED'
+  | 'LOW_STOCK'
+  | 'TEAM_INVITATION'
+  | 'TEAM_MEMBER_ADDED'
+  | 'TEAM_MEMBER_REMOVED'
+  | 'STAFF_INVITATION'
+  | 'STAFF_ADDED'
+  | 'STAFF_REMOVED'
+  | 'STAFF_ASSIGNED'
+  | 'BOOKING_ASSIGNED'
+  | 'BUSINESS_UNIT_UPDATED';
 
 /** Preference categories. Transactional categories cannot be disabled. */
 export type NotificationCategory = 'BOOKING_UPDATES' | 'PAYMENT_UPDATES' | 'MARKETING';
@@ -29,6 +43,8 @@ export function categoryForType(type: NotificationType): NotificationCategory {
   if (type === 'PAYMENT_PAID' || type === 'PAYMENT_FAILED' || type === 'PAYMENT_EFT_PENDING' || type === 'CASH_RECORDED') {
     return 'PAYMENT_UPDATES';
   }
+  // Slice 14 — operational provider stock alerts ride the transactional
+  // booking-updates category (cannot be disabled, never marketing).
   return 'BOOKING_UPDATES';
 }
 

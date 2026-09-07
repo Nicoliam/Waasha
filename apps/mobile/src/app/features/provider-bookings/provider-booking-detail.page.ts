@@ -2,7 +2,7 @@ import { Component, OnInit, inject } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { ProviderBookingsService } from '../../core/services/provider-bookings.service';
-import { statusLabel, paymentLabel, cashChangeText, navigationUrls } from './provider-bookings.utils';
+import { statusLabel, paymentLabel, cashChangeText, navigationUrls, canCompleteBooking, isOnline } from './provider-bookings.utils';
 
 @Component({
   selector: 'waasha-mobile-provider-booking-detail',
@@ -104,8 +104,35 @@ import { statusLabel, paymentLabel, cashChangeText, navigationUrls } from './pro
           </div>
         </section>
 
-        <section *ngIf="!isPending && transition" class="wa-card wa-success" role="status">
-          <p class="wa-success__msg">Booking {{ transition.status === 'ACCEPTED' ? 'accepted' : 'declined' }} successfully.</p>
+        <section *ngIf="isInProgress" class="wa-card wa-actions" aria-label="Complete service">
+          <h2 class="wa-sec">Complete service</h2>
+          <p class="wa-sub">Mark the service complete once the work is done. Completion never changes payment records — payment and service completion are separate.</p>
+          <div *ngIf="completeError" class="wa-error wa-error--inline" role="alert">
+            <p class="wa-error__title">{{ actionErrorTitle }}</p>
+            <p class="wa-error__msg">{{ actionErrorMsg }}</p>
+            <div class="wa-actions__row">
+              <button *ngIf="completeRetry" type="button" class="wa-btn wa-btn-ghost wa-btn--sm" (click)="retryComplete()">Retry</button>
+            </div>
+          </div>
+          <div *ngIf="!showCompleteConfirm" class="wa-actions__row">
+            <button type="button" class="wa-btn wa-btn-primary wa-btn--navy" [disabled]="completing" (click)="startComplete()" aria-label="Mark service complete">
+              {{ completing ? 'Completing…' : 'Mark Service Complete' }}
+            </button>
+          </div>
+          <div *ngIf="showCompleteConfirm" class="wa-confirm" role="dialog" aria-label="Confirm completion">
+            <p class="wa-confirm__title">Mark this service as complete?</p>
+            <p class="wa-confirm__msg">The customer will be notified and invited to leave a review. This cannot be undone.</p>
+            <div class="wa-actions__row">
+              <button type="button" class="wa-btn wa-btn-primary wa-btn--navy" [disabled]="completing" (click)="confirmComplete()">
+                {{ completing ? 'Completing…' : 'Yes, mark complete' }}
+              </button>
+              <button type="button" class="wa-btn wa-btn-ghost" [disabled]="completing" (click)="showCompleteConfirm = false">Not yet</button>
+            </div>
+          </div>
+        </section>
+
+        <section *ngIf="!isPending && !isInProgress && transition" class="wa-card wa-success" role="status">
+          <p class="wa-success__msg">{{ transitionMessage }}</p>
         </section>
       </ng-container>
     </div>
@@ -157,6 +184,9 @@ import { statusLabel, paymentLabel, cashChangeText, navigationUrls } from './pro
     .wa-btn--sm { padding:7px 12px; font-size:12px; border-radius:10px; }
     .wa-success { border-color:#A7F3D0; background:#ECFDF5; }
     .wa-success__msg { margin:0; font-size:13px; font-weight:700; color:#065F46; }
+    .wa-confirm { margin-top:12px; padding:14px; border:1px solid var(--waasha-border); border-radius:12px; background:#F8FAFC; }
+    .wa-confirm__title { margin:0; font-weight:800; font-size:13px; color:var(--waasha-navy); }
+    .wa-confirm__msg { margin:4px 0 0; font-size:12px; color:var(--waasha-muted); }
     @media (prefers-reduced-motion: reduce) { * { animation:none !important; transition:none !important; } }
   `]
 })
@@ -178,12 +208,30 @@ export class ProviderBookingDetailPage implements OnInit {
   actionErrorMsg = '';
   transition: any = null;
 
+  // Slice 13 — completion state. Success is only shown after a server reply.
+  completing = false;
+  showCompleteConfirm = false;
+  completeError = false;
+  completeRetry: (() => void) | null = null;
+
   navigation: any = null;
   navLoading = false;
   navError: string | null = null;
 
   get isPending(): boolean {
     return !!this.booking && (this.booking.status ?? '').toUpperCase() === 'PENDING' && !this.transition;
+  }
+
+  /** Display hint only — the server decides completion eligibility. */
+  get isInProgress(): boolean {
+    return !!this.booking && canCompleteBooking(this.booking.status ?? '') && !this.transition;
+  }
+
+  get transitionMessage(): string {
+    const status = (this.transition?.status ?? '').toUpperCase();
+    if (status === 'COMPLETED') return 'Service marked complete successfully. The customer has been notified.';
+    if (status === 'ACCEPTED') return 'Booking accepted successfully.';
+    return 'Booking declined successfully.';
   }
 
   get bookingDuration(): number | null {
@@ -238,6 +286,79 @@ export class ProviderBookingDetailPage implements OnInit {
 
   reject(): void {
     this.runAction('reject');
+  }
+
+  startComplete(): void {
+    this.completeError = false;
+    this.completeRetry = null;
+    if (!isOnline()) {
+      this.completeError = true;
+      this.actionErrorTitle = 'You appear to be offline';
+      this.actionErrorMsg = 'Completion needs a connection — nothing was changed. Please reconnect and retry.';
+      return;
+    }
+    this.showCompleteConfirm = true;
+  }
+
+  confirmComplete(): void {
+    if (this.completing || !this.booking) return;
+    if (!isOnline()) {
+      this.completeError = true;
+      this.completeRetry = () => this.confirmComplete();
+      this.actionErrorTitle = 'You appear to be offline';
+      this.actionErrorMsg = 'Completion needs a connection — nothing was changed. Please reconnect and retry.';
+      return;
+    }
+    this.completing = true;
+    this.completeError = false;
+    this.completeRetry = null;
+    this.bookings.complete(this.bookingId).subscribe({
+      next: (res) => {
+        this.completing = false;
+        this.showCompleteConfirm = false;
+        this.transition = res.data;
+        this.booking = { ...this.booking, status: res.data.status };
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      },
+      error: (err) => {
+        this.completing = false;
+        const status = err?.status;
+        const code = err?.error?.error?.code ?? '';
+        const msg = err?.error?.error?.message ?? err?.message ?? 'Failed to complete booking';
+        this.completeError = true;
+        if (status === 0) {
+          this.actionErrorTitle = 'You appear to be offline';
+          this.actionErrorMsg = 'Completion needs a connection — nothing was changed. Please reconnect and retry.';
+          this.completeRetry = () => this.confirmComplete();
+        } else if (status === 409 || code === 'BOOKING_CONFLICT') {
+          this.actionErrorTitle = 'Booking conflict';
+          this.actionErrorMsg = 'This booking changed before completion. Refreshing…';
+          this.load();
+        } else if (status === 422 || code === 'BOOKING_INVALID_STATE') {
+          this.actionErrorTitle = 'Cannot complete yet';
+          this.actionErrorMsg = 'Only services in progress can be marked complete. Refreshing…';
+          this.load();
+        } else if (status === 404) {
+          this.actionErrorTitle = 'Not found';
+          this.actionErrorMsg = 'This booking does not belong to your provider account.';
+        } else if (status === 401 || status === 403) {
+          this.actionErrorTitle = 'Access denied';
+          this.actionErrorMsg = 'Please log in with your provider account.';
+          this.router.navigate(['/auth/login']);
+        } else {
+          this.actionErrorTitle = "Couldn't complete booking";
+          this.actionErrorMsg = String(msg).includes('SQL') ? 'Please try again.' : String(msg);
+          this.completeRetry = () => this.confirmComplete();
+        }
+      },
+    });
+  }
+
+  retryComplete(): void {
+    const fn = this.completeRetry;
+    this.completeRetry = null;
+    this.completeError = false;
+    fn?.();
   }
 
   private runAction(kind: 'accept' | 'reject'): void {

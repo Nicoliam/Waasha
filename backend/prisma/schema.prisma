@@ -118,6 +118,9 @@ model ProviderProfile {
   displayName            String?            @map("display_name")
   bio                    String?            @db.Text
   profileImageUrl        String?            @map("profile_image_url")
+  // Slice 11 — optional link to the finalized media asset behind
+  // profileImageUrl. Null preserves all pre-existing Slice 10 references.
+  profileMediaAssetId    String?            @map("profile_media_asset_id")
   experienceSummary      String?            @map("experience_summary") @db.Text
   customRequestsEnabled  Boolean            @default(false) @map("custom_requests_enabled")
   verificationStatus     VerificationStatus @default(UNVERIFIED) @map("verification_status")
@@ -298,6 +301,10 @@ model ServiceImage {
   serviceId  String   @map("service_id")
   imageUrl   String   @map("image_url")
   storageKey String?  @map("storage_key")
+  // Slice 11 — optional link to a finalized media asset. Null preserves all
+  // pre-existing Slice 9 references. Historical booking snapshots never
+  // depend on this link (booking_items carry their own copies).
+  mediaAssetId String? @map("media_asset_id")
   sortOrder  Int      @default(0) @map("sort_order")
   createdAt  DateTime @default(now()) @map("created_at")
   updatedAt  DateTime @updatedAt @map("updated_at")
@@ -306,6 +313,7 @@ model ServiceImage {
 
   @@map("service_images")
   @@index([serviceId])
+  @@index([mediaAssetId])
 }
 
 // ── Teams & Businesses (tenant isolation) ───────────────────────
@@ -320,7 +328,8 @@ model Team {
   createdAt       DateTime @default(now()) @map("created_at")
   updatedAt       DateTime @updatedAt @map("updated_at")
 
-  members TeamMember[]
+  members     TeamMember[]
+  invitations TeamInvitation[]
 
   @@map("teams")
   @@index([ownerProviderId])
@@ -358,6 +367,7 @@ model Business {
 
   units BusinessUnit[]
   staff BusinessStaff[]
+  staffInvitations BusinessStaffInvitation[]
 
   @@map("businesses")
   @@index([ownerProviderId])
@@ -383,6 +393,7 @@ model BusinessUnit {
   categories BusinessUnitCategory[]
   locations  BusinessLocation[]
   services   Service[]
+  staffInvitations BusinessStaffInvitation[]
 
   @@map("business_units")
   @@index([businessId])
@@ -418,6 +429,61 @@ model BusinessStaff {
   @@map("business_staff")
   @@index([businessId])
   @@index([providerId])
+}
+
+// ── Slice 15 — T2/T3 invitations (secure, scoped, expiring, single-use) ──
+// Tokens are random 256-bit values; only the SHA-256 hash is persisted.
+// The raw token is returned once at creation and never logged. Invitations
+// are scoped to exactly one team or business(+unit); acceptance verifies
+// the session provider belongs to the invitee identity — cross-business
+// acceptance is impossible. No vendor SDK: notification hooks use the
+// existing provider-agnostic notification abstraction.
+
+model TeamInvitation {
+  id                String    @id @default(cuid())
+  teamId            String    @map("team_id")
+  invitedProviderId String?   @map("invited_provider_id")
+  invitedEmail      String?   @map("invited_email")
+  role              String    @default("PROVIDER") // MANAGER | PROVIDER
+  tokenHash         String    @unique @map("token_hash")
+  status            String    @default("PENDING") // PENDING | ACCEPTED | REVOKED | EXPIRED
+  expiresAt         DateTime  @map("expires_at")
+  createdBy         String    @map("created_by")
+  acceptedAt        DateTime? @map("accepted_at")
+  createdAt         DateTime  @default(now()) @map("created_at")
+  updatedAt         DateTime  @updatedAt @map("updated_at")
+
+  team Team @relation(fields: [teamId], references: [id], onDelete: Cascade)
+
+  @@map("team_invitations")
+  @@index([teamId, status])
+  @@index([invitedProviderId])
+  @@index([status, expiresAt])
+}
+
+model BusinessStaffInvitation {
+  id                String    @id @default(cuid())
+  businessId        String    @map("business_id")
+  businessUnitId    String?   @map("business_unit_id")
+  invitedProviderId String?   @map("invited_provider_id")
+  invitedEmail      String?   @map("invited_email")
+  role              String    @default("STAFF") // MANAGER | STAFF
+  tokenHash         String    @unique @map("token_hash")
+  status            String    @default("PENDING") // PENDING | ACCEPTED | REVOKED | EXPIRED
+  expiresAt         DateTime  @map("expires_at")
+  createdBy         String    @map("created_by")
+  acceptedAt        DateTime? @map("accepted_at")
+  createdAt         DateTime  @default(now()) @map("created_at")
+  updatedAt         DateTime  @updatedAt @map("updated_at")
+
+  business     Business      @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  businessUnit BusinessUnit? @relation(fields: [businessUnitId], references: [id], onDelete: Cascade)
+
+  @@map("business_staff_invitations")
+  @@index([businessId, status])
+  @@index([businessUnitId])
+  @@index([invitedProviderId])
+  @@index([status, expiresAt])
 }
 
 // ── Availability ────────────────────────────────────────────────
@@ -749,6 +815,361 @@ model NotificationPreference {
   @@unique([userId, channel, notificationType])
   @@map("notification_preferences")
   @@index([userId])
+}
+
+// ── Media & File Storage (Slice 11) ─────────────────────────────────
+// Blueprint Document 12. MySQL stores metadata/relationships only — never
+// raw binary. Object bytes live in provider-agnostic object storage behind
+// the StorageProvider interface (backend/src/infrastructure/storage).
+// Lifecycle: PENDING_UPLOAD → UPLOADED → ACTIVE; failure/cleanup states
+// REJECTED / FAILED / DELETED. Only ACTIVE assets may be attached or
+// served as public images.
+
+model MediaAsset {
+  id               String    @id @default(cuid())
+  uuid             String    @unique @default(uuid())
+  ownerType        String    @map("owner_type") // PROVIDER | CUSTOMER | ADMIN
+  ownerId          String    @map("owner_id") // provider profile id or user id — always server-derived
+  tenantId         String?   @map("tenant_id")
+  purpose          String    @map("purpose") // PROFILE | SERVICE | PORTFOLIO | CUSTOM_REQUEST | BUSINESS | VERIFICATION
+  targetId         String?   @map("target_id") // service id / custom-request id where applicable
+  storageKey       String    @unique @map("storage_key") // server-generated namespaced key, never client-supplied
+  originalFilename String?   @map("original_filename")
+  mimeType         String    @map("mime_type")
+  detectedMimeType String?   @map("detected_mime_type")
+  extension        String?
+  sizeBytes        Int       @map("size_bytes")
+  checksum         String?
+  width            Int?
+  height           Int?
+  visibility       String    @default("PUBLIC") @map("visibility") // PUBLIC | PRIVATE
+  moderationStatus String    @default("PENDING") @map("moderation_status") // PENDING | APPROVED | REJECTED | NEEDS_REVIEW | HIDDEN
+  status           String    @default("PENDING_UPLOAD") @map("status") // PENDING_UPLOAD | UPLOADED | ACTIVE | REJECTED | FAILED | DELETED
+  createdBy        String    @map("created_by") // uploader user id — server-derived
+  createdAt        DateTime  @default(now()) @map("created_at")
+  updatedAt        DateTime  @updatedAt @map("updated_at")
+  deletedAt        DateTime? @map("deleted_at")
+
+  @@map("media_assets")
+  @@index([ownerType, ownerId])
+  @@index([purpose, targetId])
+  @@index([status])
+  @@index([storageKey])
+  @@index([createdBy])
+}
+
+// ── POS & Inventory (Slice 14) ────────────────────────────────────────
+// Provider/business operational tooling. A POS sale is NOT a booking: it
+// never creates bookings, never completes bookings, and never writes
+// Payment/CashLedgerEntry rows (payment records stay booking-scoped).
+// Commission treatment for POS is DEFERRED to the finance/admin slice:
+// pos_sales carries an informational commission quote (commissionEligible
+// is always false in this slice) — never authoritative settlement.
+// Inventory quantities are server-authoritative; every change is traced
+// through inventory_movements with the resulting balance preserved.
+
+model InventoryItem {
+  id                String    @id @default(cuid())
+  uuid              String    @unique @default(uuid())
+  providerId        String    @map("provider_id") // owning provider profile id — server-derived
+  businessUnitId    String?   @map("business_unit_id") // T3 unit scope where applicable
+  sku               String?   // unique per provider where set
+  name              String
+  description       String?   @db.Text
+  unit              String    @default("unit")
+  costPrice         Decimal   @default(0) @db.Decimal(12, 2) @map("cost_price")
+  sellingPrice      Decimal   @db.Decimal(12, 2) @map("selling_price")
+  currency          String    @default("ZAR")
+  quantityOnHand    Int       @default(0) @map("quantity_on_hand")
+  lowStockThreshold Int       @default(0) @map("low_stock_threshold")
+  isActive          Boolean   @default(true) @map("is_active")
+  imageUrl          String?   @map("image_url") // reference only — uploads stay behind the Slice 11 media abstraction
+  createdAt         DateTime  @default(now()) @map("created_at")
+  updatedAt         DateTime  @updatedAt @map("updated_at")
+  deletedAt         DateTime? @map("deleted_at")
+
+  movements InventoryMovement[]
+  saleLines PosSaleLine[]
+
+  @@map("inventory_items")
+  @@index([providerId])
+  @@index([businessUnitId])
+  @@index([providerId, isActive])
+  @@index([providerId, sku])
+  @@index([isActive])
+  @@index([updatedAt])
+}
+
+model InventoryMovement {
+  id                String   @id @default(cuid())
+  itemId            String   @map("item_id")
+  providerId        String   @map("provider_id") // tenant scope snapshot — server-derived
+  businessUnitId    String?  @map("business_unit_id")
+  movementType      String   @map("movement_type") // RECEIVED | ADJUST_INCREASE | ADJUST_DECREASE | SALE | RETURN | REVERSAL
+  quantityDelta     Int      @map("quantity_delta") // signed: +in / −out
+  resultingQuantity Int      @map("resulting_quantity") // balance after applying delta
+  actorUserId       String   @map("actor_user_id")
+  referenceType     String?  @map("reference_type") // POS_SALE | MANUAL | REVERSAL
+  referenceId       String?  @map("reference_id")
+  reason            String?  @db.Text
+  createdAt         DateTime @default(now()) @map("created_at")
+
+  item InventoryItem @relation(fields: [itemId], references: [id], onDelete: Cascade)
+
+  @@map("inventory_movements")
+  @@index([itemId, createdAt])
+  @@index([providerId, createdAt])
+  @@index([movementType])
+  @@index([referenceType, referenceId])
+}
+
+model PosSale {
+  id               String   @id @default(cuid())
+  uuid             String   @unique @default(uuid())
+  providerId       String   @map("provider_id") // owning provider profile id — server-derived
+  businessUnitId   String?  @map("business_unit_id")
+  status           String   @default("COMPLETED") @map("status") // COMPLETED | REVERSED
+  paymentMethod    String   @map("payment_method") // cash | eft | waasha_payment
+  paymentStatus    String   @default("PAID") @map("payment_status") // PAID | PENDING
+  currency         String   @default("ZAR")
+  subtotal         Decimal  @db.Decimal(12, 2)
+  totalAmount      Decimal  @db.Decimal(12, 2) @map("total_amount")
+  // Informational commission quote only (Slice 14: NOT settlement — see header).
+  commissionRate   Decimal? @db.Decimal(5, 2) @map("commission_rate")
+  commissionAmount Decimal? @db.Decimal(12, 2) @map("commission_amount")
+  commissionEligible Boolean @default(false) @map("commission_eligible")
+  idempotencyKey   String?  @unique @map("idempotency_key")
+  note             String?  @db.Text
+  createdBy        String   @map("created_by") // actor user id — server-derived
+  reversedAt       DateTime? @map("reversed_at")
+  reversalReason   String?  @map("reversal_reason") @db.Text
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+
+  lines PosSaleLine[]
+
+  @@map("pos_sales")
+  @@index([providerId, createdAt])
+  @@index([businessUnitId, createdAt])
+  @@index([status])
+  @@index([paymentMethod])
+  @@index([idempotencyKey])
+}
+
+model PosSaleLine {
+  id              String  @id @default(cuid())
+  saleId          String  @map("sale_id")
+  lineType        String  @map("line_type") // SERVICE | PRODUCT
+  serviceId       String? @map("service_id")
+  inventoryItemId String? @map("inventory_item_id")
+  nameSnapshot    String  @map("name_snapshot") // historical price/name — never recalculated
+  unitPrice       Decimal @db.Decimal(12, 2) @map("unit_price")
+  quantity        Int
+  lineTotal       Decimal @db.Decimal(12, 2) @map("line_total")
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  sale PosSale       @relation(fields: [saleId], references: [id], onDelete: Cascade)
+  item InventoryItem? @relation(fields: [inventoryItemId], references: [id], onDelete: SetNull)
+
+  @@map("pos_sale_lines")
+  @@index([saleId])
+  @@index([serviceId])
+  @@index([inventoryItemId])
+}
+
+// ── Training-Centre Ecosystem (Slice 17) ────────────────────────────
+// Blueprint Documents 01/05/06 + §§30–31/36–38/42. Partners recruit
+// students/graduates and may accrue a *configured* allocation taken from
+// the platform commission on *eligible completed services only* — never
+// for registration, approval, booking creation, payment alone, cancelled
+// or declined bookings. Attribution is historical and never deleted when
+// a partner is deactivated. Partner affiliation never affects
+// marketplace ranking (enforced by absence of any ranking coupling here).
+// Payout rails are deferred: accruals are ledger records (ACCRUED), not
+// payments; no model here implies money moved.
+
+model TrainingPartner {
+  id                 String   @id @default(cuid())
+  uuid               String   @unique @default(uuid())
+  legalName          String   @map("legal_name")
+  displayName        String   @map("display_name")
+  description        String?  @db.Text
+  institutionType    String   @map("institution_type") // COLLEGE | ACADEMY | TRAINING_CENTRE | UNIVERSITY | NGO | OTHER
+  contactEmail       String?  @map("contact_email")
+  contactPhone       String?  @map("contact_phone")
+  website            String?
+  addressLine1       String?  @map("address_line_1")
+  city               String?
+  province           String?
+  postalCode         String?  @map("postal_code")
+  country            String?  @default("ZA")
+  categoriesServed   Json?    @map("categories_served") // subset of the 5 launch category codes
+  logoUrl            String?  @map("logo_url") // reference only — uploads stay behind the Slice 11 media abstraction
+  status             String   @default("PENDING") @map("status") // PENDING | ACTIVE | SUSPENDED | DEACTIVATED
+  verificationStatus String   @default("UNVERIFIED") @map("verification_status") // UNVERIFIED | PENDING | VERIFIED | REJECTED
+  partnershipNotes   String?  @map("partnership_notes") @db.Text
+  createdAt          DateTime @default(now()) @map("created_at")
+  updatedAt          DateTime @updatedAt @map("updated_at")
+  deletedAt          DateTime? @map("deleted_at")
+
+  members     TrainingPartnerMember[]
+  referrals   TrainingReferral[]
+  attributions TrainingAttribution[]
+  evidence    TrainingEvidence[]
+  shareRules  PartnerShareRule[]
+  accruals    PartnerAccrual[]
+
+  @@map("training_partners")
+  @@index([status])
+  @@index([verificationStatus])
+  @@index([institutionType])
+}
+
+model TrainingPartnerMember {
+  id        String   @id @default(cuid())
+  partnerId String   @map("partner_id")
+  userId    String   @map("user_id")
+  role      String   @default("STAFF") @map("role") // OWNER | MANAGER | STAFF
+  status    String   @default("ACTIVE") @map("status") // ACTIVE | SUSPENDED | REMOVED
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  partner TrainingPartner @relation(fields: [partnerId], references: [id], onDelete: Cascade)
+
+  @@unique([partnerId, userId])
+  @@map("training_centre_users")
+  @@index([userId])
+  @@index([partnerId, status])
+}
+
+model TrainingReferral {
+  id              String    @id @default(cuid())
+  partnerId       String    @map("partner_id")
+  codeHash        String    @unique @map("code_hash") // SHA-256 of the random code; raw code returned once, never stored/logged
+  codePrefix      String    @map("code_prefix") // first 6 chars — non-secret lookup aid only
+  invitedEmail    String?   @map("invited_email")
+  invitedPhone    String?   @map("invited_phone")
+  programme       String?
+  status          String    @default("PENDING") @map("status") // PENDING | CLAIMED | EXPIRED | REVOKED
+  expiresAt       DateTime  @map("expires_at")
+  createdBy       String    @map("created_by") // partner member user id — server-derived
+  claimedByUserId String?   @map("claimed_by_user_id")
+  claimedAt       DateTime? @map("claimed_at")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+
+  partner TrainingPartner @relation(fields: [partnerId], references: [id], onDelete: Cascade)
+
+  @@map("training_referrals")
+  @@index([partnerId, status])
+  @@index([status, expiresAt])
+  @@index([claimedByUserId])
+}
+
+model TrainingAttribution {
+  id             String    @id @default(cuid())
+  partnerId      String    @map("partner_id")
+  providerId     String    @map("provider_id")
+  referredUserId  String?   @map("referred_user_id")
+  referralId     String?   @map("referral_id")
+  source         String    @map("source") // REFERRAL_CODE | ADMIN_ATTRIBUTION | EVIDENCE_LINKED
+  status         String    @default("ACTIVE") @map("status") // ACTIVE | ENDED
+  referredAt     DateTime  @default(now()) @map("referred_at")
+  approvedAt     DateTime? @map("approved_at")
+  endedAt        DateTime? @map("ended_at")
+  endedReason    String?   @map("ended_reason") @db.Text
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+
+  partner TrainingPartner @relation(fields: [partnerId], references: [id])
+
+  // A provider may hold rows for different partners over time (history is
+  // retained), but only one ACTIVE row is permitted — enforced
+  // transactionally in the service layer. The pair unique blocks duplicate
+  // attribution of the same provider to the same partner.
+  @@unique([partnerId, providerId])
+  @@map("training_centre_providers")
+  @@index([partnerId, status])
+  @@index([providerId, status])
+  @@index([referralId])
+}
+
+model TrainingEvidence {
+  id                     String    @id @default(cuid())
+  partnerId              String    @map("partner_id")
+  providerId             String    @map("provider_id")
+  attributionId          String?   @map("attribution_id")
+  programme              String?
+  qualificationReference String?   @map("qualification_reference")
+  institutionConfirmation String?  @map("institution_confirmation") @db.Text
+  completionDate         DateTime? @map("completion_date") @db.Date
+  mediaAssetId           String?   @map("media_asset_id") // Slice 11 media asset reference — never raw bytes
+  status                 String    @default("SUBMITTED") @map("status") // SUBMITTED | UNDER_REVIEW | APPROVED | REJECTED
+  submittedBy            String    @map("submitted_by") // server-derived user id
+  reviewedBy             String?   @map("reviewed_by")
+  reviewedAt             DateTime? @map("reviewed_at")
+  reviewNote             String?   @map("review_note") @db.Text
+  createdAt              DateTime  @default(now()) @map("created_at")
+  updatedAt              DateTime  @updatedAt @map("updated_at")
+
+  partner TrainingPartner @relation(fields: [partnerId], references: [id])
+
+  @@map("training_evidence")
+  @@index([partnerId, status])
+  @@index([providerId])
+  @@index([attributionId])
+  @@index([mediaAssetId])
+}
+
+model PartnerShareRule {
+  id           String    @id @default(cuid())
+  scope        String    @map("scope") // GLOBAL | PARTNER | PROGRAMME
+  partnerId    String?   @map("partner_id")
+  programme    String?
+  percent      Decimal   @db.Decimal(5, 2) // % of the platform commission allocated to the partner
+  currency     String    @default("ZAR")
+  isActive     Boolean   @default(true) @map("is_active")
+  effectiveFrom DateTime @default(now()) @map("effective_from")
+  effectiveTo  DateTime? @map("effective_to")
+  createdBy    String    @map("created_by") // admin user id — server-derived
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @updatedAt @map("updated_at")
+
+  partner TrainingPartner? @relation(fields: [partnerId], references: [id])
+
+  @@map("partner_share_rules")
+  @@index([scope, isActive])
+  @@index([partnerId, isActive])
+  @@index([isActive, effectiveFrom])
+}
+
+model PartnerAccrual {
+  id               String   @id @default(cuid())
+  partnerId        String   @map("partner_id")
+  providerId       String   @map("provider_id")
+  bookingId        String   @unique @map("booking_id") // one accrual per eligible booking — duplicate-safe
+  paymentId        String?  @map("payment_id")
+  grossAmount      Decimal  @db.Decimal(12, 2) @map("gross_amount")
+  commissionRate   Decimal? @db.Decimal(5, 2) @map("commission_rate") // platform commission snapshot (%)
+  commissionAmount Decimal? @db.Decimal(12, 2) @map("commission_amount") // platform commission snapshot (ZAR)
+  partnerPercent   Decimal  @db.Decimal(5, 2) @map("partner_percent") // applied rule snapshot (% of commission)
+  partnerAmount    Decimal  @db.Decimal(12, 2) @map("partner_amount") // accrued allocation snapshot (ZAR)
+  currency         String   @default("ZAR")
+  ruleId           String?  @map("rule_id") // applied rule snapshot reference
+  status           String   @default("ACCRUED") @map("status") // ACCRUED | REVERSED
+  idempotencyKey   String?  @unique @map("idempotency_key")
+  earnedAt         DateTime @default(now()) @map("earned_at")
+  paidAt           DateTime? @map("paid_at") // deferred payout rails: stays null until a real payout mechanism exists
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+
+  partner TrainingPartner @relation(fields: [partnerId], references: [id])
+
+  @@map("training_centre_earnings")
+  @@index([partnerId, status, earnedAt])
+  @@index([providerId])
+  @@index([bookingId])
+  @@index([status])
 }
 
 // ── Audit ───────────────────────────────────────────────────────

@@ -61,6 +61,16 @@ function dow(dateStr: string, tz: string): number {
   return getDayOfWeekForProviderDate(dateStr, tz);
 }
 
+/**
+ * Provider-local calendar date guaranteed in the future (avoids time-of-day
+ * rot: hardcoded "today" morning slots expire mid-run and 422 correctly).
+ * Intent of the slot tests is preserved — only the date floats.
+ */
+function futureLocalDate(tz: string): string {
+  const fmt = new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit' });
+  return fmt.format(new Date(Date.now() + 48 * 3600 * 1000));
+}
+
 beforeEach(() => {
   jest.clearAllMocks();
   mockBusinessFindMany.mockResolvedValue([]);
@@ -228,8 +238,8 @@ describe('Timezone hardening — availability provider-local calendar', () => {
   });
 
   it('5. Existing booking conflict still blocks the correct local slot (provider-local)', async () => {
-    const date = '2026-09-07';
     const tz = 'Africa/Johannesburg';
+    const date = futureLocalDate(tz);
     const tok = token({ sub: 'user-cust1' });
     mockUserFindUnique.mockResolvedValue({ id: 'user-cust1', status: 'ACTIVE' } as any);
     mockProviderProfileFindUnique.mockResolvedValue({ id: 'prov-jhb', status: 'ACTIVE', userId: 'user-jhb', timezone: tz } as any);
@@ -249,8 +259,8 @@ describe('Timezone hardening — availability provider-local calendar', () => {
   });
 
   it('6. Booking created from an available local slot persists correctly', async () => {
-    const date = '2026-09-07';
     const tz = 'Africa/Johannesburg';
+    const date = futureLocalDate(tz);
     const tok = token({ sub: 'user-cust1' });
     mockUserFindUnique.mockResolvedValue({ id: 'user-cust1', status: 'ACTIVE' } as any);
     mockCustomerProfileFindUnique.mockResolvedValue({ id: 'cust-tz-1', userId: 'user-cust1' } as any);

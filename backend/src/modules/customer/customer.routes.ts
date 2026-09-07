@@ -61,10 +61,9 @@ router.patch('/me', async (req: Request, res: Response) => {
 
 // ── Customer booking management — Phase 2 Slice 6 (read-only) ─────────────
 // Customer identity always comes from the authenticated session. No
-// customerId/userId is accepted from the client. There is intentionally no
-// customer state-transition endpoint: cancellation/completion are blueprint
-// concepts not yet implemented server-side, and the client must never force
-// booking status.
+// customerId/userId is accepted from the client. Customer state transitions
+// (cancel/reschedule) live in the Slice 12 action endpoints below; the
+// client must never force booking status directly.
 router.get('/me/bookings', async (req: Request, res: Response) => {
   const authUser = req.authUser!;
   const schema = z.object({
@@ -103,6 +102,118 @@ router.get('/me/bookings/:id', async (req: Request, res: Response) => {
     const e = err as { status?: number; code?: string; message?: string; details?: unknown };
     if (e.status) return res.status(e.status).json({ success: false, error: { code: e.code ?? 'ERROR', message: e.message, details: e.details } });
     return res.status(500).json({ success: false, error: { code: 'INTERNAL_ERROR', message: 'Failed to load booking' } });
+  }
+});
+
+// ── Customer booking actions — Phase 2 Slice 12 ────────────────────────────
+// Customer identity always comes from the authenticated session. No
+// customerId/userId/tenantId/providerId/serviceId/price/status/payment
+// field is accepted from the client. Strict schemas reject mass assignment.
+const cancelActionSchema = z
+  .object({
+    reason: z.string().trim().max(500).optional(),
+  })
+  .strict();
+
+const rescheduleActionSchema = z
+  .object({
+    scheduledStart: z.string().min(1),
+  })
+  .strict();
+
+function actionError(res: Response, err: unknown, fallback: string) {
+  const e = err as { status?: number; code?: string; message?: string; details?: unknown };
+  if (e && typeof e.status === 'number') {
+    return res.status(e.status).json({ success: false, error: { code: e.code ?? 'ERROR', message: e.message, details: e.details } });
+  }
+  return res.status(500).json({ success: false, error: { code: 'INTERNAL_ERROR', message: fallback } });
+}
+
+router.post('/me/bookings/:id/cancel', async (req: Request, res: Response) => {
+  const authUser = req.authUser!;
+  const id = req.params.id as string;
+  if (!id) return res.status(422).json({ success: false, error: { code: 'VALIDATION_ERROR', message: 'Booking id required' } });
+  const parsed = cancelActionSchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    return res.status(422).json({ success: false, error: { code: 'VALIDATION_ERROR', message: 'Invalid body', details: parsed.error.flatten() } });
+  }
+  try {
+    const { cancelCustomerBooking } = await import('../bookings/customer-booking-actions.service');
+    const result = await cancelCustomerBooking(authUser.userId, id, { reason: parsed.data.reason }, {
+      ip: req.ip,
+      userAgent: req.headers['user-agent'],
+    });
+    return res.json({ success: true, data: result });
+  } catch (err: unknown) {
+    return actionError(res, err, 'Failed to cancel booking');
+  }
+});
+
+async function handleReschedule(req: Request, res: Response) {
+  const authUser = req.authUser!;
+  const id = req.params.id as string;
+  if (!id) return res.status(422).json({ success: false, error: { code: 'VALIDATION_ERROR', message: 'Booking id required' } });
+  const parsed = rescheduleActionSchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    return res.status(422).json({ success: false, error: { code: 'VALIDATION_ERROR', message: 'Invalid body', details: parsed.error.flatten() } });
+  }
+  try {
+    const { rescheduleCustomerBooking } = await import('../bookings/customer-booking-actions.service');
+    const result = await rescheduleCustomerBooking(authUser.userId, id, { scheduledStart: parsed.data.scheduledStart }, {
+      ip: req.ip,
+      userAgent: req.headers['user-agent'],
+    });
+    return res.json({ success: true, data: result });
+  } catch (err: unknown) {
+    return actionError(res, err, 'Failed to reschedule booking');
+  }
+}
+
+router.post('/me/bookings/:id/reschedule', handleReschedule);
+router.patch('/me/bookings/:id/reschedule', handleReschedule);
+
+// ── Customer reviews — Phase 2 Slice 13 ────────────────────────────────────
+// Only customer-submittable fields (rating, comment) are accepted. Ownership
+// fields (providerId, customerId, bookingId authority, serviceId, price,
+// status, payment, commission) are never accepted — the server derives
+// customer/provider/service from the authorized COMPLETED booking.
+const reviewSchema = z
+  .object({
+    rating: z.number().int().min(1).max(5),
+    comment: z.string().max(1000).optional(),
+  })
+  .strict();
+
+router.post('/me/bookings/:id/review', async (req: Request, res: Response) => {
+  const authUser = req.authUser!;
+  const id = req.params.id as string;
+  if (!id) return res.status(422).json({ success: false, error: { code: 'VALIDATION_ERROR', message: 'Booking id required' } });
+  const parsed = reviewSchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    return res.status(422).json({ success: false, error: { code: 'VALIDATION_ERROR', message: 'Invalid body', details: parsed.error.flatten() } });
+  }
+  try {
+    const { createBookingReview } = await import('../bookings/booking-reviews.service');
+    const result = await createBookingReview(authUser.userId, id, { rating: parsed.data.rating, comment: parsed.data.comment }, {
+      ip: req.ip,
+      userAgent: req.headers['user-agent'],
+    });
+    return res.status(201).json({ success: true, data: result });
+  } catch (err: unknown) {
+    return actionError(res, err, 'Failed to submit review');
+  }
+});
+
+router.get('/me/bookings/:id/review', async (req: Request, res: Response) => {
+  const authUser = req.authUser!;
+  const id = req.params.id as string;
+  if (!id) return res.status(422).json({ success: false, error: { code: 'VALIDATION_ERROR', message: 'Booking id required' } });
+  try {
+    const { getBookingReviewEligibility } = await import('../bookings/booking-reviews.service');
+    const result = await getBookingReviewEligibility(authUser.userId, id);
+    return res.json({ success: true, data: result });
+  } catch (err: unknown) {
+    return actionError(res, err, 'Failed to load review eligibility');
   }
 });
 

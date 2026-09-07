@@ -54,6 +54,8 @@ function err(status: number, code: string, message: string, details?: unknown): 
 export interface ProviderScope {
   profile: any;
   ownedUnitIds: string[];
+  /** Slice 15 — units where the session provider is ACTIVE staff (operational visibility). */
+  staffUnitIds: string[];
 }
 
 export async function resolveProviderScope(providerUserId: string): Promise<ProviderScope> {
@@ -83,11 +85,42 @@ export async function resolveProviderScope(providerUserId: string): Promise<Prov
   } catch {
     ownedUnitIds = [];
   }
-  return { profile, ownedUnitIds };
+  // Slice 15 — ACTIVE staff rows grant operational visibility of their units'
+  // bookings (location privacy + lifecycle rules still enforced downstream).
+  let staffUnitIds: string[] = [];
+  try {
+    const rows =
+      ((await (prisma as any).businessStaff?.findMany?.({
+        where: { providerId: (profile as any).id, status: 'ACTIVE' },
+        select: { businessUnitId: true },
+      })) as any[]) ?? [];
+    if (Array.isArray(rows)) {
+      staffUnitIds = rows.map((r: any) => r.businessUnitId).filter((v: any) => !!v);
+    }
+  } catch {
+    staffUnitIds = [];
+  }
+  return { profile, ownedUnitIds, staffUnitIds };
 }
 
 /** Tenant isolation: booking is visible to this provider scope only. */
 export function isBookingInScope(booking: any, scope: ProviderScope): boolean {
+  const pid = (scope.profile as any).id;
+  if (booking.providerId && booking.providerId === pid) return true;
+  if (booking.assignedProviderId && booking.assignedProviderId === pid) return true;
+  if (booking.businessUnitId && scope.ownedUnitIds.includes(booking.businessUnitId)) return true;
+  if (booking.businessUnitId && (scope.staffUnitIds ?? []).includes(booking.businessUnitId)) return true;
+  return false;
+}
+
+/**
+ * Slice 15 — management scope (transitions/completion).
+ * Staff visibility (staffUnitIds) is operational read-only: accepting,
+ * declining or completing requires ownership or an explicit assignment
+ * (assignedProviderId). This keeps staff from gaining unrestricted control
+ * over unit bookings they were never assigned.
+ */
+export function isBookingManageable(booking: any, scope: ProviderScope): boolean {
   const pid = (scope.profile as any).id;
   if (booking.providerId && booking.providerId === pid) return true;
   if (booking.assignedProviderId && booking.assignedProviderId === pid) return true;
@@ -98,7 +131,8 @@ export function isBookingInScope(booking: any, scope: ProviderScope): boolean {
 function bookingWhereForScope(scope: ProviderScope): any {
   const pid = (scope.profile as any).id;
   const ors: any[] = [{ providerId: pid }, { assignedProviderId: pid }];
-  if (scope.ownedUnitIds.length > 0) ors.push({ businessUnitId: { in: scope.ownedUnitIds } });
+  const unitIds = [...scope.ownedUnitIds, ...(scope.staffUnitIds ?? [])];
+  if (unitIds.length > 0) ors.push({ businessUnitId: { in: unitIds } });
   return { OR: ors };
 }
 
@@ -308,6 +342,10 @@ async function transitionBooking(
       } as any);
       if (!booking || !isBookingInScope(booking as any, scope)) {
         throw err(404, 'BOOKING_NOT_FOUND', 'Booking not found');
+      }
+      // Slice 15 — staff visibility does not confer transition authority.
+      if (!isBookingManageable(booking as any, scope)) {
+        throw err(403, 'FORBIDDEN', 'Only the booking owner or assignee may transition this booking');
       }
       const b: any = booking;
       const previousStatus = b.status as string;

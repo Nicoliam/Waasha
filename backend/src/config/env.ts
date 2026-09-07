@@ -37,6 +37,19 @@ export const env = {
   PAYSTACK_SECRET_KEY: process.env.PAYSTACK_SECRET_KEY ?? '',
   PAYSTACK_PUBLIC_KEY: process.env.PAYSTACK_PUBLIC_KEY ?? '',
   PAYSTACK_WEBHOOK_SECRET: process.env.PAYSTACK_WEBHOOK_SECRET ?? process.env.PAYSTACK_SECRET_KEY ?? '',
+  // Media & file storage (Slice 11) — provider-agnostic configuration.
+  // No credentials, access keys, or secrets are read here. The storage
+  // adapter is selected by name only; concrete credentials (if any) stay
+  // inside the deployment environment / secret manager, never in code.
+  STORAGE_PROVIDER: process.env.WAASHA_STORAGE_PROVIDER ?? 'test-adapter',
+  STORAGE_BUCKET: process.env.WAASHA_STORAGE_BUCKET ?? 'waasha-media',
+  STORAGE_REGION: process.env.WAASHA_STORAGE_REGION ?? 'af-south-1',
+  STORAGE_ENDPOINT: process.env.WAASHA_STORAGE_ENDPOINT ?? '',
+  CDN_BASE_URL: (process.env.WAASHA_CDN_BASE_URL ?? 'https://media.local').replace(/\/+$/, ''),
+  MEDIA_PROFILE_MAX_BYTES: parseInt(process.env.WAASHA_MEDIA_PROFILE_MAX_BYTES ?? '10485760', 10),
+  MEDIA_SERVICE_MAX_BYTES: parseInt(process.env.WAASHA_MEDIA_SERVICE_MAX_BYTES ?? '15728640', 10),
+  MEDIA_PORTFOLIO_MAX_BYTES: parseInt(process.env.WAASHA_MEDIA_PORTFOLIO_MAX_BYTES ?? '15728640', 10),
+  MEDIA_CUSTOM_REQUEST_MAX_BYTES: parseInt(process.env.WAASHA_MEDIA_CUSTOM_REQUEST_MAX_BYTES ?? '15728640', 10),
 } as const;
 
 // Fail-fast in production if weak placeholder is in use (covers cases where requireEnv fallback bypassed in non-prod startup)
