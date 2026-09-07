@@ -56,11 +56,35 @@ export function err(
 export interface RequestCtx {
   ip?: string;
   userAgent?: string;
-  roles?: string[];
 }
 
-function isAdmin(ctx?: RequestCtx): boolean {
-  return (ctx?.roles ?? []).map((r) => String(r).toUpperCase()).includes('ADMIN');
+/**
+ * DB-backed ADMIN check (canonical authorization semantics, cf.
+ * modules/admin/admin-auth.ts `requireAdmin`).
+ *
+ * Canonical rule: session identifies the user → database user_roles → roles
+ * decides current authority. JWT `roles` claims are NEVER sufficient
+ * authority (a token issued before a grant/revocation carries stale
+ * authority), so this helper resolves ADMIN from the current DB role state
+ * on every call. Fail-closed: any DB error or missing data means
+ * non-admin (ownership/tenant rules still apply).
+ */
+export async function isCurrentAdmin(sessionUserId: string): Promise<boolean> {
+  if (!sessionUserId || typeof sessionUserId !== 'string') return false;
+  try {
+    const userRole = (prisma as any).userRole;
+    if (!userRole?.findMany) return false;
+    const memberships = await userRole.findMany({
+      where: { userId: sessionUserId },
+      include: { role: true },
+    });
+    return (
+      Array.isArray(memberships) &&
+      memberships.some((m: any) => String(m?.role?.code ?? '').toUpperCase() === 'ADMIN')
+    );
+  } catch {
+    return false;
+  }
 }
 
 async function audit(
@@ -161,8 +185,8 @@ function toPublicDTO(asset: any, opts: { includeSensitive?: boolean } = {}) {
   return dto;
 }
 
-function assertOwnerOrAdmin(asset: any, scope: ActorScope, sessionUserId: string, ctx?: RequestCtx) {
-  if (isAdmin(ctx)) return;
+async function assertOwnerOrAdmin(asset: any, scope: ActorScope, sessionUserId: string, ctx?: RequestCtx) {
+  if (await isCurrentAdmin(sessionUserId)) return;
   const owned =
     (asset.ownerType === 'PROVIDER' && scope.providerId !== null && asset.ownerId === scope.providerId) ||
     (asset.ownerType === 'CUSTOMER' && scope.customerId !== null && asset.ownerId === scope.customerId) ||
@@ -407,7 +431,7 @@ export async function finalizeMedia(
     throw err(404, 'MEDIA_NOT_FOUND', 'Media not found');
   }
   const scope = await resolveActor(sessionUserId);
-  assertOwnerOrAdmin(asset, scope, sessionUserId, ctx);
+  await assertOwnerOrAdmin(asset, scope, sessionUserId, ctx);
 
   // Idempotency: repeated finalization never duplicates active references.
   if ((asset as any).status === 'ACTIVE') {
@@ -515,10 +539,10 @@ export async function getMedia(sessionUserId: string, mediaId: string, ctx?: Req
   const isPublicActive = (asset as any).status === 'ACTIVE' && (asset as any).visibility === 'PUBLIC';
   if (!isPublicActive) {
     const scope = await resolveActor(sessionUserId);
-    assertOwnerOrAdmin(asset, scope, sessionUserId, ctx);
+    await assertOwnerOrAdmin(asset, scope, sessionUserId, ctx);
   }
   const scope = await resolveActor(sessionUserId).catch(() => ({ providerId: null, customerId: null }));
-  const owner = isAdmin(ctx) || isOwner(asset, scope, sessionUserId);
+  const owner = (await isCurrentAdmin(sessionUserId)) || isOwner(asset, scope, sessionUserId);
   return toPublicDTO(asset, { includeSensitive: owner });
 }
 
@@ -544,11 +568,12 @@ export async function deleteMedia(sessionUserId: string, mediaId: string, ctx?: 
     throw err(404, 'MEDIA_NOT_FOUND', 'Media not found');
   }
   const scope = await resolveActor(sessionUserId);
-  assertOwnerOrAdmin(asset, scope, sessionUserId, ctx);
+  await assertOwnerOrAdmin(asset, scope, sessionUserId, ctx);
 
   // Detach from own service images only. A reference owned by another
   // tenant blocks deletion instead of being silently removed.
   const linkedImages = await (prisma as any).serviceImage?.findMany?.({ where: { mediaAssetId: (asset as any).id } }).catch(() => []) ?? [];
+  const adminOverride = await isCurrentAdmin(sessionUserId);
   for (const img of (linkedImages as any[]) ?? []) {
     const service = await (prisma as any).service?.findUnique?.({ where: { id: (img as any).serviceId } }).catch(() => null);
     if (!service) continue;
@@ -556,7 +581,7 @@ export async function deleteMedia(sessionUserId: string, mediaId: string, ctx?: 
       scope.providerId !== null &&
       ((service as any).providerId === scope.providerId ||
         ((service as any).businessUnitId && (await canManageUnit(sessionUserId, scope.providerId, (service as any).businessUnitId))));
-    if (!owns && !isAdmin(ctx)) {
+    if (!owns && !adminOverride) {
       throw err(403, 'FORBIDDEN', 'Media is attached to a service you do not own');
     }
   }
@@ -602,7 +627,7 @@ export async function attachProfileImage(sessionUserId: string, mediaId: string,
   if (!asset || (asset as any).status === 'DELETED' || (asset as any).deletedAt) {
     throw err(404, 'MEDIA_NOT_FOUND', 'Media not found');
   }
-  assertOwnerOrAdmin(asset, scope, sessionUserId, ctx);
+  await assertOwnerOrAdmin(asset, scope, sessionUserId, ctx);
   if ((asset as any).status !== 'ACTIVE') {
     // Pending/incomplete assets are never exposed as public active images.
     throw err(422, 'MEDIA_NOT_READY', 'Media has not completed upload finalization');
@@ -642,7 +667,7 @@ export async function attachServiceImage(
     throw err(404, 'MEDIA_NOT_FOUND', 'Media not found');
   }
   // A provider can only attach media they own/are authorized to use.
-  assertOwnerOrAdmin(asset, scope, sessionUserId, ctx);
+  await assertOwnerOrAdmin(asset, scope, sessionUserId, ctx);
   if ((asset as any).status !== 'ACTIVE') {
     throw err(422, 'MEDIA_NOT_READY', 'Media has not completed upload finalization');
   }
@@ -728,4 +753,4 @@ export async function removeServiceImage(
   return { id: (image as any).id, deleted: true };
 }
 
-export const __testables = { resolveActor, authorizeSessionTarget, toPublicDTO };
+export const __testables = { resolveActor, authorizeSessionTarget, toPublicDTO, isCurrentAdmin };

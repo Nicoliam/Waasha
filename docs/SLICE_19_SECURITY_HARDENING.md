@@ -61,6 +61,33 @@ All referral state changes are atomic conditional writes (Prisma/MySQL
   no self-assignment (link binds only to the claimed referral's partner;
   redeem schema is strict), admin-only reassignment, auditability.
 
+## 5. Follow-up — Media admin authorization hardening (Final QA)
+
+HIGH-severity find: `media.routes.ts → mediaCtx()` copied the JWT `roles`
+claim into `ctx.roles`, and `media.service.ts → isAdmin(ctx)` treated it as
+ADMIN authority for the cross-tenant override in `getMedia`, `finalizeMedia`,
+`deleteMedia`, `attachProfileImage`, `attachServiceImage`, and
+`removeServiceImage` (via `provider.routes.ts`). A revoked admin kept ADMIN
+media privileges until token expiry.
+
+Remediation (no schema change, no migration required):
+- `media.service.ts` resolves current ADMIN authority per call with
+  `isCurrentAdmin(sessionUserId)` — database `user_roles → roles` on every
+  request, same semantics as `requireAdmin`. Fail-closed (DB error → non-admin).
+- `RequestCtx` no longer carries `roles`; `mediaCtx()` returns request
+  metadata (`ip`, `userAgent`) only. JWT `roles` claims remain identity
+  metadata only — never authorization.
+- `provider.routes.ts` no longer forwards JWT roles into `removeServiceImage`.
+- Ownership/tenant rules unchanged; non-admin cross-tenant access still
+  yields safe 404; `req.authUser.roles` has zero authorization readers left
+  in `backend/src`.
+
+Tests: `backend/tests/media-admin-revocation.test.ts` (9 tests) — revoked
+admin with the same JWT denied on next request; stale ADMIN claims denied
+for customer/provider/T2/T3; valid current admin override works for
+get/finalize/delete/profile-attach/service-attach; owner lifecycle intact;
+DB-outage fails closed.
+
 ## 3. Schema / migration
 
 No schema change. Existing constraints (`codeHash` unique,

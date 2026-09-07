@@ -37,9 +37,18 @@ function mediaError(res: Response, err: any, fallback: string) {
   return res.status(500).json({ success: false, error: { code: 'INTERNAL_ERROR', message: fallback } });
 }
 
+/**
+ * Request context for media operations: request metadata only.
+ *
+ * ADMIN authority is NEVER derived here. The service resolves current
+ * ADMIN authority from the database (user_roles → roles) using the
+ * authenticated session user id on every protected call, so revocation
+ * takes effect on the next request even when the JWT still carries a
+ * stale `roles` claim. JWT `roles` claims are identity metadata only —
+ * never authorization.
+ */
 function mediaCtx(req: Request) {
-  const roles = Array.isArray((req.authUser as any)?.roles) ? (req.authUser as any).roles as string[] : [];
-  return { ip: req.ip, userAgent: req.headers['user-agent'] as string | undefined, roles };
+  return { ip: req.ip, userAgent: req.headers['user-agent'] as string | undefined };
 }
 
 const uploadSessionSchema = z.object({

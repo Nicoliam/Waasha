@@ -477,7 +477,6 @@ router.delete('/me/services/:serviceId/images/:imageId', async (req: Request, re
       {
         ip: req.ip,
         userAgent: req.headers['user-agent'],
-        roles: Array.isArray((req.authUser as any)?.roles) ? (req.authUser as any).roles as string[] : [],
       },
     );
     return res.json({ success: true, data });
